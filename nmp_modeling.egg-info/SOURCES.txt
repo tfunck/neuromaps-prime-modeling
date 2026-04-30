@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+setup.py
+nmp_modeling/__init__.py
+nmp_modeling/fitting.py
+nmp_modeling/observables.py
+nmp_modeling/parametrization.py
+nmp_modeling.egg-info/PKG-INFO
+nmp_modeling.egg-info/SOURCES.txt
+nmp_modeling.egg-info/dependency_links.txt
+nmp_modeling.egg-info/top_level.txt
+tests/test_fitting.py
+tests/test_observables.py

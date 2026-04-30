@@ -140,18 +140,6 @@ This factoring is deliberate: the fitting layer needs to be reusable across back
 
 The implication: parameter names in `free_grid` must match parameter names in `MapParametrization.free_params` exactly. Mismatches raise `KeyError` at simulation time.
 
-## What's intentionally missing from v1
-
-These are deliberate omissions, not oversights. Each is straightforward to add once the abstraction is validated.
-
-- **No CMA-ES, differential evolution, or scipy.optimize wrappers.** Grid sweep only. Adding more optimisers is a bounded extension once the adapter protocol is settled. **This will need to be addressed before tackling problems like Zhang et al. 2024**, who fit 10 parameters using CMA-ES — grid search would be intractable for that case.
-- **No automatic detection of empirical-data type.** The user passes an observable callable, an empirical target, and a distance function. We considered autodetecting "user passed timeseries → use FCD; user passed an FC matrix → use Pearson", but this is the kind of magic that breaks the moment someone has a slightly nonstandard use case. Better to make the user be explicit.
-- **No multi-stage fitting API.** Multi-stage workflows (Deco 2018-style: fit G first, then receptor coefficients) are composed by calling `grid_sweep` twice and threading results through the `fixed` argument. There is no general "stages" API because the staging is a scientific question, not an implementation detail. The example notebook demonstrates the pattern.
-- **No second adapter.** Only Neuronumba is wrapped. The next thing to build is probably a Kuramoto adapter, both because it would be useful and because it's the right test of whether the abstraction actually generalises.
-- **No REACT integration.** REACT is dual regression, which doesn't fit the `simulate(theta) → bold` protocol (no theta to optimise, no simulation). Best handled as a separate top-level function rather than forced into the adapter shape. See [`docs/DESIGN.md`](docs/DESIGN.md) for discussion.
-- **No FIC J caching.** The original Neuronumba notebook caches feedback inhibition control J values across grid points to avoid recomputation. This optimisation could be added inside the adapter without changing the public API; deliberately omitted from v1 to keep the adapter readable.
-- **No NMP-PRIME fetch integration.** Currently you hand the library a numpy array directly. In production use, you'd presumably call something like `neuromaps_prime.fetch("gaba_schaefer500")` and pass the result. This is a one-line glue change.
-
 ## Repository layout
 
 ```
@@ -205,9 +193,7 @@ In rough priority order — feedback on this ordering is welcome.
 If you're reading this with feedback in mind, here are the choices I'd most like to hear about:
 
 - **Is the three-layer split right?** Specifically: should the adapter own more of the fitting protocol (e.g., the multi-seed averaging) or less? Currently the adapter is a single-shot `simulate(theta, seed)` and the fitting layer owns everything else.
-- **Is sympy the right parser?** Alternatives: `numexpr` (fast, fewer features), `asteval` (slower, more flexible), or rolling our own. SymPy gives parsing + safety + symbolic differentiation in one library.
-- **Is `MapParametrization` doing too much, or not enough?** Currently it carries the target, expression, maps, and parameter specs. Should `target` live elsewhere (since it's adapter-specific in spirit)?
-- **The REACT case.** Is breaking it out as a separate function the right call, or does that fragment the API in a way that hurts more than it helps?
+
 - **Multi-stage threading via `fixed`.** Currently you hand the previous stage's `result.params` into the next stage's `fixed` argument. This is bare-bones — any objections, or any features you'd want here (e.g., a `MultiStageFit` helper that records the staging history)?
 
 ## Citation

@@ -191,10 +191,11 @@ In rough priority order — feedback on this ordering is welcome.
 ## Design questions for review
 
 If you're reading this with feedback in mind, here are the choices I'd most like to hear about:
-
+- Can we leverage the brain map statistical testing tools in the original Neuromaps to do facilitate statistical testing of models?
 - **Is the three-layer split right?** Specifically: should the adapter own more of the fitting protocol (e.g., the multi-seed averaging) or less? Currently the adapter is a single-shot `simulate(theta, seed)` and the fitting layer owns everything else.
 
 - **Multi-stage threading via `fixed`.** Currently you hand the previous stage's `result.params` into the next stage's `fixed` argument. This is bare-bones — any objections, or any features you'd want here (e.g., a `MultiStageFit` helper that records the staging history)?
+  
 
 ## Citation
 

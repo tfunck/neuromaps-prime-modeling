@@ -11,3 +11,4 @@ nmp_modeling.egg-info/dependency_links.txt
 nmp_modeling.egg-info/top_level.txt
 tests/test_fitting.py
 tests/test_observables.py
+tests/test_parametrization.py

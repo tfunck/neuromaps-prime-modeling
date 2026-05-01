@@ -31,7 +31,7 @@ To use the Neuronumba adapter, you also need Neuronumba installed:
 pip install -e "git+https://github.com/neich/neuronumba.git#egg=neuronumba&subdirectory=src"
 ```
 
-### Minimal example
+### Illustrative example
 
 ```python
 import numpy as np

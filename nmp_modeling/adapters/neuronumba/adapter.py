@@ -55,8 +55,13 @@ class NeuronumbaAdapter:
             raise ValueError("weights must be a square matrix.")
 
         self.model_class = _get_model_class(model)
-        self.parametrizations = list(parametrizations or [])
         self.fixed_model_attrs = dict(fixed_model_attrs or {})
+
+        self.parametrizations = list(parametrizations or [])
+        targets = [p.target for p in self.parametrizations]
+        duplicates = sorted({x for x in targets if targets.count(x) > 1})
+        if duplicates:
+            raise ValueError(f"Duplicate parametrization target(s): {duplicates}")
 
         self.g_param = g_param
         self.dt = float(dt)

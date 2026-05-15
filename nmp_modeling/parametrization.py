@@ -1,19 +1,5 @@
-"""Layer 1: simulator-agnostic parametrization of brain maps.
-
-A ``MapParametrization`` ties together (a) a target variable in some
-model's equations, (b) a string expression like ``"a + b * gaba"``,
-(c) the brain maps referenced in that expression, and (d) a set of
-*free* and *fixed* scalar parameters. It knows how to evaluate itself
-at given parameter values to produce a per-node numpy vector.
-
-This module contains no simulator imports and could equally well feed
-a Kuramoto adapter, a REACT integration, or any other downstream tool.
-"""
-
-from __future__ import annotations
-
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 import sympy as sp
@@ -21,194 +7,210 @@ import sympy as sp
 
 @dataclass
 class FreeParam:
-    """Specification for a single free scalar parameter.
-
-    Carries an initial value and bounds. Bounds are required because
-    every reasonable optimiser (grid search, differential evolution,
-    CMA-ES) needs them, and asking for them now costs nothing.
-
-    Attributes
-    ----------
-    init : float
-        Initial value. Used as the centre point for grid construction
-        if no explicit grid is supplied, and as the starting guess for
-        local optimisers in future versions.
-    bounds : tuple of (float, float)
-        (lower, upper) inclusive bounds.
-    """
     init: float
     bounds: Tuple[float, float]
+
+    def __post_init__(self):
+        """Validate and normalize a scalar free parameter."""
+        if len(self.bounds) != 2:
+            raise ValueError("bounds must contain exactly two values: (lower, upper).")
+
+        lower, upper = float(self.bounds[0]), float(self.bounds[1])
+        init = float(self.init)
+
+        if lower >= upper:
+            raise ValueError("bounds must satisfy lower < upper.")
+
+        if not (lower <= init <= upper):
+            raise ValueError("init must lie within bounds.")
+
+        self.init = init
+        self.bounds = (lower, upper)
 
 
 @dataclass
 class MapParametrization:
-    """Ties a target model variable to an expression over brain maps + scalars.
-
-    A MapParametrization says: "the model attribute named ``target`` should
-    be set to the per-node array obtained by evaluating ``expression``,
-    where the symbols in the expression are either keys of ``maps`` (which
-    resolve to numpy arrays) or names in ``free_params``/``fixed_params``
-    (which resolve to scalars)."
-
-    Parameters
-    ----------
-    target : str
-        Name of the model attribute this parametrization controls. For
-        Neuronumba's Deco2018 this might be ``"w_gain_e"``, ``"J"``, etc.
-        The adapter is responsible for knowing whether the named attribute
-        exists on the model class — this dataclass does not validate.
-    expression : str
-        A SymPy-parseable expression. Allowed: arithmetic (``+ - * /``),
-        powers (``**``), standard functions (``exp``, ``log``, ``sqrt``,
-        trig). Disallowed: anything sympify rejects. The parser is safe;
-        it does not execute arbitrary Python.
-    maps : dict[str, np.ndarray]
-        Mapping from symbol name (as it appears in ``expression``) to a
-        per-node numpy array. All arrays must have the same length, which
-        becomes the number of nodes for this parametrization. The length
-        is checked at construction time.
-    free_params : dict[str, FreeParam]
-        Scalar parameters that will be varied during fitting. Keys must
-        appear as symbols in ``expression``.
-    fixed_params : dict[str, float]
-        Scalar parameters that are held fixed at known values. Useful for
-        carrying forward a value from a previous fitting stage. Keys must
-        appear as symbols in ``expression``.
-
-    Notes
-    -----
-    The set ``free_params.keys() | fixed_params.keys() | maps.keys()`` must
-    exactly match the free symbols of ``expression``. We check this in
-    ``__post_init__``. If the user references a symbol that isn't supplied,
-    or supplies one that isn't referenced, you get a clear error up-front
-    rather than a confusing failure inside a simulation loop.
-
-    The compiled numpy callable is cached on first use (``_compiled_fn``).
-    """
     target: str
     expression: str
-    maps: Dict[str, np.ndarray]
+    maps: Dict[str, np.ndarray] = field(default_factory=dict)
     free_params: Dict[str, FreeParam] = field(default_factory=dict)
     fixed_params: Dict[str, float] = field(default_factory=dict)
 
-    # Set in __post_init__; not user-facing.
     _expr: sp.Expr = field(init=False, repr=False)
-    _symbol_order: List[str] = field(init=False, repr=False)
+    _symbol_order: Tuple[str, ...] = field(init=False, repr=False)
     _compiled_fn: Optional[Callable] = field(default=None, init=False, repr=False)
     _n_nodes: int = field(init=False, repr=False)
 
     def __post_init__(self):
-        # Parse the expression. sympify is safe — it does not exec.
-        self._expr = sp.sympify(self.expression)
+        """Validate symbols, normalize maps, and prepare expression evaluation."""
+        self._validate_basic_fields()
 
-        # Names actually used in the expression.
+        self.maps = dict(self.maps or {})
+        self.free_params = dict(self.free_params or {})
+        self.fixed_params = dict(self.fixed_params or {})
+
+        self._validate_symbol_names()
+        self._validate_no_duplicate_symbols()
+
+        self._expr = sp.sympify(self.expression)
         symbols_in_expr = {s.name for s in self._expr.free_symbols}
 
-        # Names the user supplied across all three sources.
-        supplied = (
-            set(self.maps.keys())
-            | set(self.free_params.keys())
-            | set(self.fixed_params.keys())
+        supplied_symbols = (
+            set(self.maps)
+            | set(self.free_params)
+            | set(self.fixed_params)
         )
 
-        # Catch typos early. This avoids the common failure mode where the
-        # user writes "a + b * gaba" but has the array under the key "GABA".
-        missing = symbols_in_expr - supplied
-        extra = supplied - symbols_in_expr
+        missing = symbols_in_expr - supplied_symbols
+        extra = supplied_symbols - symbols_in_expr
+
         if missing:
             raise ValueError(
-                f"Expression {self.expression!r} references symbols "
-                f"{sorted(missing)} that are not in maps, free_params, "
-                f"or fixed_params."
+                f"Expression uses symbol(s) not supplied by maps, free_params, "
+                f"or fixed_params: {sorted(missing)}"
             )
+
         if extra:
             raise ValueError(
-                f"maps/free_params/fixed_params include symbols {sorted(extra)} "
-                f"that are not used in expression {self.expression!r}."
+                f"Supplied symbol(s) not used in expression: {sorted(extra)}"
             )
 
-        # Check map shapes. All maps for one parametrization must have the
-        # same number of nodes.
-        if self.maps:
-            shapes = {k: np.asarray(v).shape for k, v in self.maps.items()}
-            lengths = {k: s[0] if len(s) >= 1 else 1 for k, s in shapes.items()}
-            unique_lengths = set(lengths.values())
-            if len(unique_lengths) != 1:
-                raise ValueError(
-                    f"All maps in a parametrization must have the same length; "
-                    f"got {lengths}."
-                )
-            self._n_nodes = unique_lengths.pop()
-        else:
-            # Pure scalar parametrization — no maps. Allowed (e.g. a
-            # constant offset). Number of nodes is 1; broadcasting handles
-            # the rest at the adapter layer.
-            self._n_nodes = 1
+        self.maps = self._normalize_maps(self.maps)
+        self.fixed_params = self._normalize_fixed_params(self.fixed_params)
+        self._validate_free_params(self.free_params)
 
-        # Coerce all map arrays to 1-D float numpy.
-        self.maps = {
-            k: np.asarray(v, dtype=float).reshape(-1)
-            for k, v in self.maps.items()
-        }
-
-        # Lock down the symbol order for lambdify. This MUST be deterministic
-        # so positional calls into the compiled function stay correct.
-        self._symbol_order = (
-            sorted(self.maps.keys())
-            + sorted(self.fixed_params.keys())
-            + sorted(self.free_params.keys())
+        self._symbol_order = tuple(
+            sorted(self.maps)
+            + sorted(self.fixed_params)
+            + sorted(self.free_params)
         )
 
+    def _validate_basic_fields(self):
+        """Check target and expression fields."""
+        if not isinstance(self.target, str) or not self.target:
+            raise ValueError("target must be a non-empty string.")
+
+        if not isinstance(self.expression, str) or not self.expression:
+            raise ValueError("expression must be a non-empty string.")
+
+    def _validate_symbol_names(self):
+        """Check that all supplied symbol names are strings."""
+        for group_name, group in (
+            ("maps", self.maps),
+            ("free_params", self.free_params),
+            ("fixed_params", self.fixed_params),
+        ):
+            bad_names = [k for k in group if not isinstance(k, str) or not k]
+            if bad_names:
+                raise ValueError(
+                    f"{group_name} contains invalid symbol name(s): {bad_names}"
+                )
+
+    def _validate_no_duplicate_symbols(self):
+        """Prevent the same symbol from appearing in multiple input groups."""
+        groups = {
+            "maps": set(self.maps),
+            "free_params": set(self.free_params),
+            "fixed_params": set(self.fixed_params),
+        }
+
+        pairs = (
+            ("maps", "free_params"),
+            ("maps", "fixed_params"),
+            ("free_params", "fixed_params"),
+        )
+
+        for left, right in pairs:
+            overlap = groups[left] & groups[right]
+            if overlap:
+                raise ValueError(
+                    f"Symbol(s) cannot appear in both {left} and {right}: "
+                    f"{sorted(overlap)}"
+                )
+
+    def _normalize_maps(self, maps: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """Convert maps to one-dimensional float arrays and check lengths."""
+        normalized = {}
+        n_nodes = None
+
+        for name, values in maps.items():
+            arr = np.asarray(values, dtype=float).reshape(-1)
+
+            if arr.size == 0:
+                raise ValueError(f"Map '{name}' is empty.")
+
+            if n_nodes is None:
+                n_nodes = arr.size
+            elif arr.size != n_nodes:
+                raise ValueError(
+                    f"All maps must have the same length. "
+                    f"Map '{name}' has length {arr.size}, expected {n_nodes}."
+                )
+
+            normalized[name] = arr
+
+        self._n_nodes = int(n_nodes) if n_nodes is not None else 1
+        return normalized
+
+    def _normalize_fixed_params(self, fixed_params: Dict[str, float]) -> Dict[str, float]:
+        """Convert fixed parameters to floats."""
+        normalized = {}
+
+        for name, value in fixed_params.items():
+            arr = np.asarray(value, dtype=float).reshape(-1)
+
+            if arr.size != 1:
+                raise ValueError(f"Fixed parameter '{name}' must be scalar.")
+
+            normalized[name] = float(arr[0])
+
+        return normalized
+
+    def _validate_free_params(self, free_params: Dict[str, FreeParam]):
+        """Check that all free parameters are FreeParam objects."""
+        for name, value in free_params.items():
+            if not isinstance(value, FreeParam):
+                raise TypeError(
+                    f"Free parameter '{name}' must be a FreeParam object."
+                )
+
     def _compile(self) -> Callable:
-        """Lazily build the numpy-vectorised callable from the SymPy expr."""
+        """Compile the symbolic expression into a NumPy-compatible function."""
         if self._compiled_fn is None:
             symbols = [sp.Symbol(name) for name in self._symbol_order]
-            # lambdify with "numpy" backend gives us elementwise broadcasting
-            # over array arguments for free.
             self._compiled_fn = sp.lambdify(symbols, self._expr, modules="numpy")
         return self._compiled_fn
 
     def evaluate(self, free_values: Dict[str, float]) -> np.ndarray:
-        """Evaluate the parametrization at given free-parameter values.
+        """Evaluate the expression using maps, fixed parameters, and free values."""
+        free_values = dict(free_values or {})
+        missing = set(self.free_params) - set(free_values)
 
-        Parameters
-        ----------
-        free_values : dict[str, float]
-            Values for every key in ``self.free_params``. Extra keys are
-            ignored (so you can pass a single flat ``theta`` dict that
-            covers multiple parametrizations).
+        if missing:
+            raise KeyError(f"Missing free parameter value(s): {sorted(missing)}")
 
-        Returns
-        -------
-        np.ndarray
-            Per-node array of length ``self._n_nodes``.
-
-        Raises
-        ------
-        KeyError
-            If any free parameter is missing from ``free_values``.
-        """
         fn = self._compile()
-
-        # Assemble positional arguments in the locked symbol order.
         args = []
+
         for name in self._symbol_order:
             if name in self.maps:
                 args.append(self.maps[name])
             elif name in self.fixed_params:
                 args.append(self.fixed_params[name])
             else:
-                # Must be a free param.
-                if name not in free_values:
-                    raise KeyError(
-                        f"Free parameter {name!r} not provided in free_values; "
-                        f"got keys {sorted(free_values.keys())}."
-                    )
-                args.append(free_values[name])
+                arr = np.asarray(free_values[name], dtype=float).reshape(-1)
 
-        result = fn(*args)
+                if arr.size != 1:
+                    raise ValueError(f"Free parameter '{name}' must be scalar.")
 
-        # If the expression is purely scalar (no maps), lambdify returns a
-        # scalar. Force a 1-D array so adapters see a consistent type.
-        result = np.atleast_1d(np.asarray(result, dtype=float))
+                args.append(float(arr[0]))
+
+        result = np.asarray(fn(*args), dtype=float).reshape(-1)
+
+        if result.size not in (1, self._n_nodes):
+            raise ValueError(
+                f"Expression for target '{self.target}' returned length "
+                f"{result.size}, expected 1 or {self._n_nodes}."
+            )
+
         return result

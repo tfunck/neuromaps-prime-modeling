@@ -14,16 +14,12 @@ class FreeParam:
         """Validate and normalize a scalar free parameter."""
         if len(self.bounds) != 2:
             raise ValueError("bounds must contain exactly two values: (lower, upper).")
-
         lower, upper = float(self.bounds[0]), float(self.bounds[1])
         init = float(self.init)
-
         if lower >= upper:
             raise ValueError("bounds must satisfy lower < upper.")
-
         if not (lower <= init <= upper):
             raise ValueError("init must lie within bounds.")
-
         self.init = init
         self.bounds = (lower, upper)
 
@@ -60,16 +56,13 @@ class MapParametrization:
             | set(self.free_params)
             | set(self.fixed_params)
         )
-
         missing = symbols_in_expr - supplied_symbols
         extra = supplied_symbols - symbols_in_expr
-
         if missing:
             raise ValueError(
                 f"Expression uses symbol(s) not supplied by maps, free_params, "
                 f"or fixed_params: {sorted(missing)}"
             )
-
         if extra:
             raise ValueError(
                 f"Supplied symbol(s) not used in expression: {sorted(extra)}"
@@ -89,7 +82,6 @@ class MapParametrization:
         """Check target and expression fields."""
         if not isinstance(self.target, str) or not self.target:
             raise ValueError("target must be a non-empty string.")
-
         if not isinstance(self.expression, str) or not self.expression:
             raise ValueError("expression must be a non-empty string.")
 
@@ -113,13 +105,11 @@ class MapParametrization:
             "free_params": set(self.free_params),
             "fixed_params": set(self.fixed_params),
         }
-
         pairs = (
             ("maps", "free_params"),
             ("maps", "fixed_params"),
             ("free_params", "fixed_params"),
         )
-
         for left, right in pairs:
             overlap = groups[left] & groups[right]
             if overlap:
@@ -135,10 +125,8 @@ class MapParametrization:
 
         for name, values in maps.items():
             arr = np.asarray(values, dtype=float).reshape(-1)
-
             if arr.size == 0:
                 raise ValueError(f"Map '{name}' is empty.")
-
             if n_nodes is None:
                 n_nodes = arr.size
             elif arr.size != n_nodes:
@@ -146,7 +134,6 @@ class MapParametrization:
                     f"All maps must have the same length. "
                     f"Map '{name}' has length {arr.size}, expected {n_nodes}."
                 )
-
             normalized[name] = arr
 
         self._n_nodes = int(n_nodes) if n_nodes is not None else 1
@@ -158,10 +145,8 @@ class MapParametrization:
 
         for name, value in fixed_params.items():
             arr = np.asarray(value, dtype=float).reshape(-1)
-
             if arr.size != 1:
                 raise ValueError(f"Fixed parameter '{name}' must be scalar.")
-
             normalized[name] = float(arr[0])
 
         return normalized
@@ -185,7 +170,6 @@ class MapParametrization:
         """Evaluate the expression using maps, fixed parameters, and free values."""
         free_values = dict(free_values or {})
         missing = set(self.free_params) - set(free_values)
-
         if missing:
             raise KeyError(f"Missing free parameter value(s): {sorted(missing)}")
 
@@ -199,18 +183,14 @@ class MapParametrization:
                 args.append(self.fixed_params[name])
             else:
                 arr = np.asarray(free_values[name], dtype=float).reshape(-1)
-
                 if arr.size != 1:
                     raise ValueError(f"Free parameter '{name}' must be scalar.")
-
                 args.append(float(arr[0]))
 
         result = np.asarray(fn(*args), dtype=float).reshape(-1)
-
         if result.size not in (1, self._n_nodes):
             raise ValueError(
                 f"Expression for target '{self.target}' returned length "
                 f"{result.size}, expected 1 or {self._n_nodes}."
             )
-
         return result

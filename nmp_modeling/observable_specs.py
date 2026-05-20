@@ -111,11 +111,8 @@ def _empirical_fc(data, input_type, fisher_z=False, **kwargs):
         return observables.fisher_z_matrix(fc) if fisher_z else fc
 
     if input_type == "fisher_z_fc":
-        if not fisher_z:
-            raise ValueError(
-                "input_type='fisher_z_fc' requires an observable with fisher_z=True."
-            )
-        return observables.check_square_matrix(data, name="fisher_z_fc")
+        zfc = observables.check_square_matrix(data, name="fisher_z_fc")
+        return zfc if fisher_z else observables.inverse_fisher_z_matrix(zfc)
 
     if input_type == "observable":
         return np.asarray(data, dtype=float)
@@ -130,16 +127,12 @@ def _empirical_gbc(data, input_type, fisher_z=False, **kwargs):
 
     if input_type == "fc":
         fc = observables.check_square_matrix(data, name="fc")
-        if fisher_z:
-            fc = observables.fisher_z_matrix(fc)
+        fc = observables.fisher_z_matrix(fc) if fisher_z else fc
         return observables.compute_gbc_from_fc(fc)
 
     if input_type == "fisher_z_fc":
-        if not fisher_z:
-            raise ValueError(
-                "input_type='fisher_z_fc' requires an observable with fisher_z=True."
-            )
-        fc = observables.check_square_matrix(data, name="fisher_z_fc")
+        zfc = observables.check_square_matrix(data, name="fisher_z_fc")
+        fc = zfc if fisher_z else observables.inverse_fisher_z_matrix(zfc)
         return observables.compute_gbc_from_fc(fc)
 
     if input_type == "observable":
@@ -334,7 +327,7 @@ OBSERVABLE_SPECS = {
         distance_fn=_distance_fc_similarity,
         aggregate_fn=_aggregate_fc,
         defaults=_fc_defaults(fisher_z=False),
-        allowed_input_types=("timeseries", "fc", "observable"),
+        allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),
     ),
     "fc_corr_z": ObservableSpec(
         name="fc_corr_z",
@@ -352,7 +345,7 @@ OBSERVABLE_SPECS = {
         distance_fn=_distance_vector_similarity,
         aggregate_fn=_mean_arrays,
         defaults=_fc_defaults(fisher_z=False),
-        allowed_input_types=("timeseries", "fc", "observable"),
+        allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),
     ),
     "gbc_corr_z": ObservableSpec(
         name="gbc_corr_z",
@@ -370,7 +363,7 @@ OBSERVABLE_SPECS = {
         distance_fn=_distance_frobenius,
         aggregate_fn=_aggregate_fc,
         defaults=_fc_defaults(fisher_z=False),
-        allowed_input_types=("timeseries", "fc", "observable"),
+        allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),
     ),
     "fc_mse": ObservableSpec(
         name="fc_mse",
@@ -379,7 +372,7 @@ OBSERVABLE_SPECS = {
         distance_fn=_distance_mse,
         aggregate_fn=_aggregate_fc,
         defaults=_fc_defaults(fisher_z=False),
-        allowed_input_types=("timeseries", "fc", "observable"),
+        allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),
     ),
     "fc_mean_abs_diff": ObservableSpec(
         name="fc_mean_abs_diff",
@@ -388,7 +381,7 @@ OBSERVABLE_SPECS = {
         distance_fn=_distance_mean_abs_diff,
         aggregate_fn=_aggregate_fc,
         defaults=_fc_defaults(fisher_z=False),
-        allowed_input_types=("timeseries", "fc", "observable"),
+        allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),
     ),
     "fc_distribution_ks": ObservableSpec(
         name="fc_distribution_ks",
@@ -397,7 +390,7 @@ OBSERVABLE_SPECS = {
         distance_fn=_distance_fc_distribution_ks,
         aggregate_fn=_aggregate_fc_edges,
         defaults=_fc_defaults(fisher_z=False),
-        allowed_input_types=("timeseries", "fc", "observable"),
+        allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),
     ),
     "fcd_ks": ObservableSpec(
         name="fcd_ks",

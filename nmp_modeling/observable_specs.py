@@ -85,10 +85,18 @@ def _compute_fcd(data, window_size=30, step=2, fisher_z=False, triangle="upper",
     )
 
 
-def _compute_phfcd(data, triangle="upper", **kwargs):
+def _compute_phfcd(
+    data,
+    discard_offset=10,
+    pattern_size=3,
+    triangle="upper",
+    **kwargs,
+):
     """Compute simulated phase-FCD distribution."""
     return observables.compute_phfcd_distribution(
         data,
+        discard_offset=discard_offset,
+        pattern_size=pattern_size,
         triangle=triangle,
     )
 
@@ -406,7 +414,11 @@ OBSERVABLE_SPECS = {
         empirical_fn=_empirical_phfcd,
         distance_fn=_distance_ks,
         aggregate_fn=_concat_arrays,
-        defaults={"triangle": "upper"},
+        defaults={
+            "discard_offset": 10,
+            "pattern_size": 3,
+            "triangle": "upper",
+        },
         allowed_input_types=("timeseries", "observable"),
     ),
 }

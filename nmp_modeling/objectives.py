@@ -4,8 +4,8 @@ from scipy.stats import ks_2samp
 from nmp_modeling.observables import matrix_edges
 
 
-def _finite_vectors(a, b):
-    """Return finite paired vectors."""
+def _paired_finite_vectors(a, b):
+    """Return paired finite vectors with the same shape."""
     x = np.ravel(np.asarray(a, dtype=float))
     y = np.ravel(np.asarray(b, dtype=float))
 
@@ -22,38 +22,52 @@ def _finite_vectors(a, b):
     return x, y
 
 
-def correlation(a, b):
-    """Compute Pearson correlation between two finite vectors."""
-    x, y = _finite_vectors(a, b)
+def similarity(a, b, metric="pearson"):
+    """Compute vector similarity using Pearson correlation or cosine similarity."""
+    x, y = _paired_finite_vectors(a, b)
 
-    if np.std(x) == 0 or np.std(y) == 0:
-        raise ValueError("Correlation is undefined for constant vectors.")
+    if metric == "pearson":
+        x_std = np.std(x)
+        y_std = np.std(y)
 
-    return float(np.corrcoef(x, y)[0, 1])
+        if x_std == 0 or y_std == 0:
+            raise ValueError("Pearson correlation is undefined for constant vectors.")
+
+        return float(np.corrcoef(x, y)[0, 1])
+
+    if metric == "cosine":
+        denom = np.linalg.norm(x) * np.linalg.norm(y)
+
+        if denom == 0:
+            raise ValueError("Cosine similarity is undefined for zero vectors.")
+
+        return float(np.dot(x, y) / denom)
+
+    raise ValueError("metric must be 'pearson' or 'cosine'.")
 
 
-def vector_correlation_distance(simulated, empirical):
-    """Return negative Pearson correlation as a minimization distance."""
-    return -correlation(simulated, empirical)
+def similarity_distance(simulated, empirical, metric="pearson"):
+    """Return negative similarity as a minimization distance."""
+    return -similarity(simulated, empirical, metric=metric)
 
 
-def edge_correlation_distance(simulated, empirical, triangle="upper"):
-    """Return negative edge-wise FC correlation."""
+def edge_similarity_distance(simulated, empirical, triangle="upper", metric="pearson"):
+    """Compare matrix edge patterns by Pearson or cosine similarity."""
     sim_edges = matrix_edges(simulated, triangle=triangle)
     emp_edges = matrix_edges(empirical, triangle=triangle)
 
-    return vector_correlation_distance(sim_edges, emp_edges)
+    return similarity_distance(sim_edges, emp_edges, metric=metric)
 
 
 def frobenius_distance(simulated, empirical):
-    """Return Frobenius norm between two matrices."""
+    """Return Frobenius norm between two arrays."""
     sim = np.asarray(simulated, dtype=float)
     emp = np.asarray(empirical, dtype=float)
 
     if sim.shape != emp.shape:
         raise ValueError("Inputs must have the same shape.")
 
-    return float(np.linalg.norm(sim - emp, ord="fro"))
+    return float(np.linalg.norm(sim - emp))
 
 
 def mse_distance(simulated, empirical):
@@ -96,7 +110,7 @@ def ks_distance(simulated, empirical):
 
 
 def fc_distribution_ks_distance(simulated, empirical, triangle="upper"):
-    """Return KS distance between FC edge-value distributions."""
+    """Compare FC edge-value distributions by KS distance."""
     sim = np.asarray(simulated, dtype=float)
     emp = np.asarray(empirical, dtype=float)
 
@@ -107,10 +121,3 @@ def fc_distribution_ks_distance(simulated, empirical, triangle="upper"):
         emp = matrix_edges(emp, triangle=triangle)
 
     return ks_distance(sim, emp)
-
-
-# Backward-compatible alias.
-
-def pearson_lower_triangle(a, b):
-    """Return negative lower-triangle FC correlation."""
-    return edge_correlation_distance(a, b, triangle="lower")

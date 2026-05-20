@@ -15,21 +15,22 @@ VALID_INPUT_TYPES = {
 
 
 def _merge_params(defaults, overrides):
-    """Merge default parameters with user overrides."""
+    """Merge default parameters with user-specified overrides."""
     params = dict(defaults)
     params.update(overrides)
     return params
 
 
-def _mean_arrays(values):
+def _mean_arrays(values, **kwargs):
     """Average same-shaped arrays."""
     arrays = [np.asarray(v, dtype=float) for v in values]
     return np.mean(np.stack(arrays, axis=0), axis=0)
 
 
-def _concat_arrays(values):
+def _concat_arrays(values, **kwargs):
     """Concatenate flattened arrays."""
-    return np.concatenate([np.ravel(np.asarray(v, dtype=float)) for v in values])
+    arrays = [np.ravel(np.asarray(v, dtype=float)) for v in values]
+    return np.concatenate(arrays)
 
 
 def _aggregate_fc(values, fisher_z=False, average_fisher_z=True, **kwargs):
@@ -63,57 +64,50 @@ def _aggregate_fc_edges(values, triangle="upper", **kwargs):
     return np.concatenate(edges)
 
 
-def _compute_fc(data, method="pearson", fisher_z=False, **kwargs):
-    """Compute FC observable from simulated time series."""
-    return observables.compute_fc(data, method=method, fisher_z=fisher_z)
+def _compute_fc(data, fisher_z=False, **kwargs):
+    """Compute simulated FC."""
+    return observables.compute_fc(data, fisher_z=fisher_z)
 
 
-def _compute_gbc(data, method="pearson", fisher_z=False, **kwargs):
-    """Compute GBC observable from simulated time series."""
-    return observables.compute_gbc(data, method=method, fisher_z=fisher_z)
+def _compute_gbc(data, fisher_z=False, **kwargs):
+    """Compute simulated GBC."""
+    return observables.compute_gbc(data, fisher_z=fisher_z)
 
 
-def _compute_fcd(
-    data,
-    window_size=30,
-    step=2,
-    fc_method="pearson",
-    fisher_z=False,
-    triangle="upper",
-    **kwargs,
-):
-    """Compute swFCD observable from simulated time series."""
+def _compute_fcd(data, window_size=30, step=2, fisher_z=False, triangle="upper", **kwargs):
+    """Compute simulated sliding-window FCD distribution."""
     return observables.compute_swfcd_distribution(
         data,
         window_size=window_size,
         step=step,
-        fc_method=fc_method,
         fisher_z=fisher_z,
         triangle=triangle,
     )
 
 
 def _compute_phfcd(data, triangle="upper", **kwargs):
-    """Compute phFCD observable from simulated time series."""
-    return observables.compute_phfcd_distribution(data, triangle=triangle)
+    """Compute simulated phase-FCD distribution."""
+    return observables.compute_phfcd_distribution(
+        data,
+        triangle=triangle,
+    )
 
 
-def _empirical_fc(data, input_type, method="pearson", fisher_z=False, **kwargs):
-    """Build empirical FC observable from supported input types."""
+def _empirical_fc(data, input_type, fisher_z=False, **kwargs):
+    """Build empirical FC from supported input types."""
     if input_type == "timeseries":
-        return observables.compute_fc(data, method=method, fisher_z=fisher_z)
+        return observables.compute_fc(data, fisher_z=fisher_z)
 
     if input_type == "fc":
-        fc = np.asarray(data, dtype=float)
+        fc = observables.check_square_matrix(data, name="fc")
         return observables.fisher_z_matrix(fc) if fisher_z else fc
 
     if input_type == "fisher_z_fc":
         if not fisher_z:
             raise ValueError(
-                "input_type='fisher_z_fc' requires fisher_z=True. "
-                "Use input_type='observable' if the value is already final."
+                "input_type='fisher_z_fc' requires an observable with fisher_z=True."
             )
-        return np.asarray(data, dtype=float)
+        return observables.check_square_matrix(data, name="fisher_z_fc")
 
     if input_type == "observable":
         return np.asarray(data, dtype=float)
@@ -121,13 +115,13 @@ def _empirical_fc(data, input_type, method="pearson", fisher_z=False, **kwargs):
     raise ValueError(f"Unsupported input_type for FC observable: {input_type}")
 
 
-def _empirical_gbc(data, input_type, method="pearson", fisher_z=False, **kwargs):
-    """Build empirical GBC observable from supported input types."""
+def _empirical_gbc(data, input_type, fisher_z=False, **kwargs):
+    """Build empirical GBC from supported input types."""
     if input_type == "timeseries":
-        return observables.compute_gbc(data, method=method, fisher_z=fisher_z)
+        return observables.compute_gbc(data, fisher_z=fisher_z)
 
     if input_type == "fc":
-        fc = np.asarray(data, dtype=float)
+        fc = observables.check_square_matrix(data, name="fc")
         if fisher_z:
             fc = observables.fisher_z_matrix(fc)
         return observables.compute_gbc_from_fc(fc)
@@ -135,10 +129,10 @@ def _empirical_gbc(data, input_type, method="pearson", fisher_z=False, **kwargs)
     if input_type == "fisher_z_fc":
         if not fisher_z:
             raise ValueError(
-                "input_type='fisher_z_fc' requires fisher_z=True. "
-                "Use input_type='observable' if the value is already final."
+                "input_type='fisher_z_fc' requires an observable with fisher_z=True."
             )
-        return observables.compute_gbc_from_fc(data)
+        fc = observables.check_square_matrix(data, name="fisher_z_fc")
+        return observables.compute_gbc_from_fc(fc)
 
     if input_type == "observable":
         return np.asarray(data, dtype=float)
@@ -147,7 +141,7 @@ def _empirical_gbc(data, input_type, method="pearson", fisher_z=False, **kwargs)
 
 
 def _empirical_fcd(data, input_type, **params):
-    """Build empirical swFCD observable from supported input types."""
+    """Build empirical sliding-window FCD distribution."""
     if input_type == "timeseries":
         return _compute_fcd(data, **params)
 
@@ -160,7 +154,7 @@ def _empirical_fcd(data, input_type, **params):
 
 
 def _empirical_phfcd(data, input_type, **params):
-    """Build empirical phFCD observable from supported input types."""
+    """Build empirical phase-FCD distribution."""
     if input_type == "timeseries":
         return _compute_phfcd(data, **params)
 
@@ -172,22 +166,27 @@ def _empirical_phfcd(data, input_type, **params):
     )
 
 
-def _distance_fc_corr(simulated, empirical, triangle="upper", **kwargs):
-    """Compare FC matrices by edge-wise correlation."""
-    return objectives.edge_correlation_distance(
+def _distance_fc_similarity(simulated, empirical, triangle="upper", metric="pearson", **kwargs):
+    """Compare FC matrices by edge-wise similarity."""
+    return objectives.edge_similarity_distance(
         simulated,
         empirical,
         triangle=triangle,
+        metric=metric,
     )
 
 
-def _distance_gbc_corr(simulated, empirical, **kwargs):
-    """Compare GBC vectors by correlation."""
-    return objectives.vector_correlation_distance(simulated, empirical)
+def _distance_vector_similarity(simulated, empirical, metric="pearson", **kwargs):
+    """Compare vectors by Pearson or cosine similarity."""
+    return objectives.similarity_distance(
+        simulated,
+        empirical,
+        metric=metric,
+    )
 
 
 def _distance_frobenius(simulated, empirical, **kwargs):
-    """Compare matrices by Frobenius distance."""
+    """Compare arrays by Frobenius distance."""
     return objectives.frobenius_distance(simulated, empirical)
 
 
@@ -197,7 +196,7 @@ def _distance_mse(simulated, empirical, **kwargs):
 
 
 def _distance_mean_abs_diff(simulated, empirical, triangle="upper", **kwargs):
-    """Compare mean FC values."""
+    """Compare mean values."""
     return objectives.mean_abs_difference(
         simulated,
         empirical,
@@ -247,7 +246,7 @@ class ObservableSpec:
 
 @dataclass
 class EmpiricalTarget:
-    """Empirical observable with cached value and matching simulation rules."""
+    """Empirical observable with cached value and matched simulation rules."""
     spec: ObservableSpec
     data: object
     input_type: str
@@ -265,23 +264,30 @@ class EmpiricalTarget:
                 self.input_type,
                 **self.params,
             )
+
         return self._value
 
     @property
     def empirical_target(self):
-        """Alias for compatibility with fitting code."""
+        """Alias for fitting code."""
         return self.value
 
     def observable(self, simulated_data):
         """Compute the matching observable from simulated data."""
-        return self.spec.compute_fn(simulated_data, **self.params)
+        return self.spec.compute_fn(
+            simulated_data,
+            **self.params,
+        )
 
     def aggregate_observable(self, simulated_values):
-        """Aggregate simulated subject-level observables."""
-        return self.spec.aggregate_fn(simulated_values, **self.params)
+        """Aggregate subject-level simulated observables."""
+        return self.spec.aggregate_fn(
+            simulated_values,
+            **self.params,
+        )
 
     def distance(self, simulated_value, empirical_value=None):
-        """Compute distance from simulated value to empirical value."""
+        """Compute distance between simulated and empirical observables."""
         if empirical_value is None:
             empirical_value = self.value
 
@@ -293,21 +299,20 @@ class EmpiricalTarget:
 
 
 def _fc_defaults(fisher_z=False):
-    """Return default FC parameters."""
+    """Return default parameters for FC-family observables."""
     return {
-        "method": "pearson",
         "fisher_z": fisher_z,
         "triangle": "upper",
+        "metric": "pearson",
         "average_fisher_z": True,
     }
 
 
 def _fcd_defaults():
-    """Return default swFCD parameters."""
+    """Return default parameters for sliding-window FCD."""
     return {
         "window_size": 30,
         "step": 2,
-        "fc_method": "pearson",
         "fisher_z": False,
         "triangle": "upper",
     }
@@ -318,7 +323,7 @@ OBSERVABLE_SPECS = {
         name="fc_corr",
         compute_fn=_compute_fc,
         empirical_fn=_empirical_fc,
-        distance_fn=_distance_fc_corr,
+        distance_fn=_distance_fc_similarity,
         aggregate_fn=_aggregate_fc,
         defaults=_fc_defaults(fisher_z=False),
         allowed_input_types=("timeseries", "fc", "observable"),
@@ -327,7 +332,7 @@ OBSERVABLE_SPECS = {
         name="fc_corr_z",
         compute_fn=_compute_fc,
         empirical_fn=_empirical_fc,
-        distance_fn=_distance_fc_corr,
+        distance_fn=_distance_fc_similarity,
         aggregate_fn=_aggregate_fc,
         defaults=_fc_defaults(fisher_z=True),
         allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),
@@ -336,7 +341,7 @@ OBSERVABLE_SPECS = {
         name="gbc_corr",
         compute_fn=_compute_gbc,
         empirical_fn=_empirical_gbc,
-        distance_fn=_distance_gbc_corr,
+        distance_fn=_distance_vector_similarity,
         aggregate_fn=_mean_arrays,
         defaults=_fc_defaults(fisher_z=False),
         allowed_input_types=("timeseries", "fc", "observable"),
@@ -345,7 +350,7 @@ OBSERVABLE_SPECS = {
         name="gbc_corr_z",
         compute_fn=_compute_gbc,
         empirical_fn=_empirical_gbc,
-        distance_fn=_distance_gbc_corr,
+        distance_fn=_distance_vector_similarity,
         aggregate_fn=_mean_arrays,
         defaults=_fc_defaults(fisher_z=True),
         allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),

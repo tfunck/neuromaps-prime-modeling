@@ -70,13 +70,13 @@ def compute_swfcd_distribution(
     triangle="upper",
 ):
     """Compute sliding-window FCD distribution from time series."""
-    ts = check_time_series(timeseries)
-    n_time = ts.shape[0]
     if window_size <= 1:
         raise ValueError("window_size must be greater than 1.")
     if step <= 0:
         raise ValueError("step must be positive.")
 
+    ts = check_time_series(timeseries)
+    n_time = ts.shape[0]
     starts = np.arange(0, n_time - window_size + 1, step)
     if len(starts) < 2:
         raise ValueError("At least two windows are required to compute FCD.")
@@ -91,28 +91,47 @@ def compute_swfcd_distribution(
     fcd = np.corrcoef(window_fc_edges)
     return matrix_edges(fcd, triangle=triangle)
 
-def compute_phfcd_distribution(timeseries, triangle="upper"):
+def compute_phfcd_distribution(
+    timeseries,
+    discard_offset=10,
+    pattern_size=3,
+    triangle="upper",
+):
     """Compute phase-FCD distribution from time series."""
     from scipy.signal import hilbert
+    if pattern_size < 1:
+        raise ValueError("pattern_size must be at least 1.")
+    if discard_offset < 0:
+        raise ValueError("discard_offset must be non-negative.")
+
     ts = check_time_series(timeseries)
-    phase = np.angle(hilbert(ts, axis=0))
+    n_time = ts.shape[0]
+    start = discard_offset
+    stop = n_time - discard_offset + 1
+    if stop <= start:
+        raise ValueError("Time series is too short for the requested discard_offset.")
 
-    phase_edges = []
+    ts = ts - np.mean(ts, axis=0, keepdims=True)
+    phase = np.angle(hilbert(ts, axis=0))[start:stop]
+    if phase.shape[0] < pattern_size + 1:
+        raise ValueError("Not enough phase samples for the requested pattern_size.")
 
+    edges = []
     for t in range(phase.shape[0]):
         delta = phase[t, :, None] - phase[t, None, :]
-        coherence = np.cos(delta)
+        edges.append(matrix_edges(np.cos(delta), triangle=triangle))
+    edges = np.asarray(edges, dtype=float)
+    patterns = np.asarray(
+        [edges[i:i + pattern_size].sum(axis=0)
+         for i in range(edges.shape[0] - pattern_size + 1)],
+        dtype=float,
+    )
 
-        np.fill_diagonal(coherence, 0.0)
-        phase_edges.append(matrix_edges(coherence, triangle=triangle))
+    values = []
+    norms = np.linalg.norm(patterns, axis=1)
+    for i in range(patterns.shape[0]):
+        for j in range(i + 1, patterns.shape[0]):
+            denom = norms[i] * norms[j]
+            values.append(0.0 if denom == 0 else np.dot(patterns[i], patterns[j]) / denom)
 
-    phase_edges = np.asarray(phase_edges, dtype=float)
-
-    if phase_edges.shape[0] < 2:
-        raise ValueError("At least two time points are required to compute phFCD.")
-
-    phfcd = np.corrcoef(phase_edges)
-
-    np.fill_diagonal(phfcd, 0.0)
-
-    return matrix_edges(phfcd, triangle=triangle)
+    return np.asarray(values, dtype=float)

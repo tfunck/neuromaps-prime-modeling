@@ -252,6 +252,11 @@ class EmpiricalTarget:
     data: object
     input_type: str
     params: dict = field(default_factory=dict)
+    label: str = None
+
+    def __post_init__(self):
+        if self.label is None:
+            self.label = self.spec.name
 
     _value: object = field(default=None, init=False, repr=False)
 
@@ -426,17 +431,24 @@ def get_observable_spec(name):
     return OBSERVABLE_SPECS[name]
 
 
-def make_empirical_target(data, observable, input_type="timeseries", **params):
+def make_empirical_target(data, observable, input_type="timeseries", label=None, **params):
     """Create one empirical target from data and an observable label."""
     if isinstance(observable, dict):
         observable_params = dict(observable)
-        name = observable_params.pop("name")
+        spec_name = observable_params.pop("name")
+        dict_label = observable_params.pop("label", None)
+
+        if label is None:
+            label = dict_label
+        elif dict_label is not None and dict_label != label:
+            raise ValueError("Conflicting target labels from label and observable['label'].")
+
         observable_params.update(params)
     else:
-        name = observable
+        spec_name = observable
         observable_params = params
 
-    spec = get_observable_spec(name)
+    spec = get_observable_spec(spec_name)
     resolved_params = spec.resolve_params(observable_params)
     spec.validate_input_type(input_type)
 
@@ -445,6 +457,7 @@ def make_empirical_target(data, observable, input_type="timeseries", **params):
         data=data,
         input_type=input_type,
         params=resolved_params,
+        label=label,
     )
 
 

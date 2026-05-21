@@ -48,8 +48,8 @@ def _as_list(x):
 
 
 def _target_names(targets):
-    """Return target names from EmpiricalTarget-like objects."""
-    return [t.spec.name for t in targets]
+    """Return target labels from EmpiricalTarget-like objects."""
+    return [t.label for t in targets]
 
 
 def _target_weights(targets, target_weights=None):

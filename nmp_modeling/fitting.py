@@ -66,7 +66,7 @@ def _target_weights(targets, target_weights=None):
         unknown = set(target_weights) - set(names)
         if unknown:
             raise ValueError(f"Unknown target weight name(s): {sorted(unknown)}")
-        return np.asarray([target_weights.get(name, 1.0) for name in names], dtype=float)
+        return np.asarray([target_weights.get(name, 0.0) for name in names], dtype=float)
 
     weights = np.asarray(target_weights, dtype=float)
 
@@ -140,8 +140,15 @@ def grid_sweep(
 ):
     """Run a simple grid sweep using EmpiricalTarget objects."""
     targets = _as_list(targets)
+    run_seeds = list(run_seeds)
+
     fixed = dict(fixed or {})
     grid = {k: np.asarray(v, dtype=float) for k, v in dict(free_grid or {}).items()}
+    overlap = set(fixed) & set(grid)
+    if overlap:
+        raise ValueError(
+            f"Parameter(s) cannot appear in both fixed and free_grid: {sorted(overlap)}"
+        )
 
     for name, values in grid.items():
         if values.size == 0:
@@ -154,7 +161,6 @@ def grid_sweep(
 
     weights = _target_weights(targets, target_weights)
     target_names = _target_names(targets)
-    run_seeds = list(run_seeds)
 
     losses = np.full(shape, np.nan)
     run_losses = np.full(shape + (len(run_seeds),), np.nan)

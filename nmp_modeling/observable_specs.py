@@ -253,16 +253,18 @@ class EmpiricalTarget:
     input_type: str
     params: dict = field(default_factory=dict)
     label: str = None
-    preprocess: callable = None
+    preprocess: object = None
 
     def __post_init__(self):
         if self.label is None:
             self.label = self.spec.name
 
-    def _apply_preprocess(self, data):
+    def _preprocess(self, data):
+        """Apply target-level preprocessing to time series data."""
         if self.preprocess is None:
             return data
-        return self.preprocess(data)
+        arr = np.asarray(data, dtype=float)
+        return self.preprocess(arr.copy())
 
     _value: object = field(default=None, init=False, repr=False)
 
@@ -271,12 +273,12 @@ class EmpiricalTarget:
         """Return cached empirical observable value."""
         if self._value is None:
             self.spec.validate_input_type(self.input_type)
+            data = self._preprocess(self.data) if self.input_type == "timeseries" else self.data
             self._value = self.spec.empirical_fn(
-                self.data,
+                data,
                 self.input_type,
                 **self.params,
             )
-
         return self._value
 
     @property
@@ -286,8 +288,9 @@ class EmpiricalTarget:
 
     def observable(self, simulated_data):
         """Compute the matching observable from simulated data."""
+        data = self._preprocess(simulated_data)
         return self.spec.compute_fn(
-            simulated_data,
+            data,
             **self.params,
         )
 
@@ -437,17 +440,32 @@ def get_observable_spec(name):
     return OBSERVABLE_SPECS[name]
 
 
-def make_empirical_target(data, observable, input_type="timeseries", label=None, **params):
+def make_empirical_target(
+    data,
+    observable,
+    input_type="timeseries",
+    label=None,
+    preprocess=None,
+    **params,
+):
     """Create one empirical target from data and an observable label."""
     if isinstance(observable, dict):
         observable_params = dict(observable)
         spec_name = observable_params.pop("name")
         dict_label = observable_params.pop("label", None)
+        dict_preprocess = observable_params.pop("preprocess", None)
 
         if label is None:
             label = dict_label
         elif dict_label is not None and dict_label != label:
             raise ValueError("Conflicting target labels from label and observable['label'].")
+
+        if preprocess is None:
+            preprocess = dict_preprocess
+        elif dict_preprocess is not None and dict_preprocess is not preprocess:
+            raise ValueError(
+                "Conflicting preprocessing functions from preprocess and observable['preprocess']."
+            )
 
         observable_params.update(params)
     else:
@@ -464,6 +482,7 @@ def make_empirical_target(data, observable, input_type="timeseries", label=None,
         input_type=input_type,
         params=resolved_params,
         label=label,
+        preprocess=preprocess,
     )
 
 

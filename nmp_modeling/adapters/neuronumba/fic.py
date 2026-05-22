@@ -106,11 +106,10 @@ def compute_j(
     min_step=0.005,
     verbose=False,
 ):
-    """Compute Deco-style feedback inhibition J for a configured model."""
+    """Compute Deco2014-style feedback inhibition J for a configured model."""
     set_seed(int(seed))
 
     sc = np.asarray(weights, dtype=float)
-
     if sc.ndim != 2 or sc.shape[0] != sc.shape[1]:
         raise ValueError("weights must be a square 2D matrix.")
 
@@ -167,10 +166,7 @@ def compute_j(
             best_largest_error = largest_error
 
         if verbose:
-            print(
-                f"trial={trial} solved={solved_count}/{n_nodes} "
-                f"largest_error={largest_error:.6g}"
-            )
+            print(f"trial={trial} solved={solved_count}/{n_nodes} largest_error={largest_error:.6g}")
 
         if solved_count == n_nodes:
             break

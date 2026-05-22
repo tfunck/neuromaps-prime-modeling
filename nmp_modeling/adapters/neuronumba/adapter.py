@@ -1,5 +1,6 @@
 import numpy as np
 from nmp_modeling.parametrization import MapParametrization
+from nmp_modeling.adapters.neuronumba.fic import compute_j
 
 def _get_model_class(model):
     """Return the Neuronumba model class from a model name or class."""
@@ -44,6 +45,11 @@ class NeuronumbaAdapter:
         tr=2000.0,
         obs_var=None,
         return_bold=True,
+        fic_target_rate=None,
+        fic_t_max=10000.0,
+        fic_t_warmup=0.0,
+        fic_max_trials=5000,
+        fic_tolerance=0.005,
     ):
         from neuronumba.simulator.integrators.euler import EulerStochastic
         from neuronumba.simulator.simulator import simulate_nodelay
@@ -81,6 +87,12 @@ class NeuronumbaAdapter:
         self._BoldStephan2007 = BoldStephan2007
         self._set_seed = set_seed
 
+        self.fic_target_rate = fic_target_rate
+        self.fic_t_max = float(fic_t_max)
+        self.fic_t_warmup = float(fic_t_warmup)
+        self.fic_max_trials = int(fic_max_trials)
+        self.fic_tolerance = float(fic_tolerance)
+
     def free_param_names(self):
         """Return theta parameters needed by this adapter."""
         names = {self.g_param}
@@ -114,6 +126,7 @@ class NeuronumbaAdapter:
 
             attrs[p.target] = value
 
+        attrs.update(dict(theta.get("_model_attrs", {}) or {}))
         if attrs.get("auto_fic", False) and "J" in attrs:
             raise ValueError(
                 "auto_fic=True but J is also provided. "
@@ -122,16 +135,39 @@ class NeuronumbaAdapter:
 
         return attrs
 
-    def simulate(self, theta, seed):
-        """Run one Neuronumba simulation."""
-        self._set_seed(int(seed))
+    def _maybe_compute_missing_j(self, attrs, integrator, seed):
+        """Compute J when auto_fic is False and no J is provided."""
+        if attrs.get("auto_fic", False):
+            return attrs
+        if "J" in attrs:
+            return attrs
 
         model = self.model_class()
-        model.set_attributes(self._model_attrs_from_theta(theta))
+        model.set_attributes(attrs)
+        attrs["J"] = compute_j(
+            model=model,
+            weights=self.weights,
+            g=attrs["g"],
+            integrator=integrator,
+            seed=seed,
+            target_rate=self.fic_target_rate,
+            t_max=self.fic_t_max,
+            t_warmup=self.fic_t_warmup,
+            max_trials=self.fic_max_trials,
+            tolerance=self.fic_tolerance,
+        )
+        return attrs
 
+    def simulate(self, theta, seed):
+        """Run one Neuronumba simulation."""
+        model = self.model_class()
         sigmas = _make_sigmas(self.sigma, model.n_state_vars)
         integrator = self._EulerStochastic(dt=self.dt, sigmas=sigmas)
+        attrs = self._model_attrs_from_theta(theta)
+        attrs = self._maybe_compute_missing_j(attrs, integrator, seed)
+        model.set_attributes(attrs)
 
+        self._set_seed(int(seed))
         signal = self._simulate_nodelay(
             model,
             integrator,

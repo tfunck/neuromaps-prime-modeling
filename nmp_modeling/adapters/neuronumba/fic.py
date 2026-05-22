@@ -107,7 +107,8 @@ def compute_j(
     verbose=False,
 ):
     """Compute Deco2014-style feedback inhibition J for a configured model."""
-    set_seed(int(seed))
+    if seed is not None:
+        set_seed(int(seed))
 
     sc = np.asarray(weights, dtype=float)
     if sc.ndim != 2 or sc.shape[0] != sc.shape[1]:

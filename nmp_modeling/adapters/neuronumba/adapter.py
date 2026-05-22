@@ -137,12 +137,14 @@ class NeuronumbaAdapter:
 
     def _maybe_compute_missing_j(self, attrs, integrator, seed):
         """Compute J when auto_fic is False and no J is provided."""
-        if attrs.get("auto_fic", False):
+        model = self.model_class()
+        if not hasattr(model, "auto_fic"):
+            return attrs
+        if attrs.get("auto_fic", getattr(model, "auto_fic")):
             return attrs
         if "J" in attrs:
             return attrs
 
-        model = self.model_class()
         model.set_attributes(attrs)
         attrs["J"] = compute_j(
             model=model,

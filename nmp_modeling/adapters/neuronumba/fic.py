@@ -31,7 +31,7 @@ def _effective_exc_gain(model, n_nodes):
     eff_gain = base_gain * (1.0 + gain_e * gain_map)
     if np.any(eff_gain <= 0):
         raise ValueError("Effective excitatory gain must be positive.")
-    return eff_gain, base_gain
+    return eff_gain
 
 
 def _rate_from_argument(x, de):
@@ -44,8 +44,11 @@ def _rate_from_argument(x, de):
 def _solve_argument_for_rate(rate, de):
     """Solve x / (1 - exp(-de * x)) = rate."""
     rate = float(rate)
+    de = float(de)
     if rate <= 0:
         raise ValueError("target_rate values must be positive.")
+    if de <= 0:
+        raise ValueError("de must be positive.")
 
     zero_limit = 1.0 / de
     if np.isclose(rate, zero_limit):
@@ -54,26 +57,30 @@ def _solve_argument_for_rate(rate, de):
     def objective(x):
         return _rate_from_argument(x, de) - rate
 
-    low = -1.0
-    high = max(1.0, 2.0 * rate)
-    while objective(low) > 0:
-        low *= 2.0
-        if low < -1e6:
-            raise RuntimeError("Failed to bracket the transfer-function root.")
-    while objective(high) < 0:
-        high *= 2.0
-        if high > 1e6:
-            raise RuntimeError("Failed to bracket the transfer-function root.")
+    if rate < zero_limit:
+        low = -1.0
+        high = 0.0
+        while objective(low) > 0:
+            low *= 2.0
+            if low < -1e6:
+                raise RuntimeError("Failed to bracket the negative root.")
+    else:
+        low = 0.0
+        high = 1.0
+        while objective(high) < 0:
+            high *= 2.0
+            if high > 1e6:
+                raise RuntimeError("Failed to bracket the positive root.")
 
     return float(brentq(objective, low, high))
 
 
 def _target_current_offset(model, n_nodes, target_rate=None):
     """Compute the target for Ie - be / ae."""
-    eff_gain, base_gain = _effective_exc_gain(model, n_nodes)
+    eff_gain = _effective_exc_gain(model, n_nodes)
 
     if target_rate is None:
-        return _DECO_CURRENT_OFFSET * base_gain / eff_gain
+        return _DECO_CURRENT_OFFSET / eff_gain
 
     rates = _as_region_vector(target_rate, n_nodes, "target_rate")
     arguments = np.array(

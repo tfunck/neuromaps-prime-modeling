@@ -253,10 +253,16 @@ class EmpiricalTarget:
     input_type: str
     params: dict = field(default_factory=dict)
     label: str = None
+    preprocess: callable = None
 
     def __post_init__(self):
         if self.label is None:
             self.label = self.spec.name
+
+    def _apply_preprocess(self, data):
+        if self.preprocess is None:
+            return data
+        return self.preprocess(data)
 
     _value: object = field(default=None, init=False, repr=False)
 

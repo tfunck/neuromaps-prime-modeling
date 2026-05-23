@@ -3,7 +3,7 @@ import numba as nb
 
 from neuronumba.basic.attr import Attr
 from neuronumba.simulator.integrators.base_integrator import Integrator
-from neuronumba.numba_tools.config import NUMBA_CACHE
+from neuronumba.numba_tools.config import NUMBA_CACHE, NUMBA_FASTMATH, NUMBA_NOGIL
 
 
 class EulerStochastic(Integrator):
@@ -36,6 +36,8 @@ class EulerStochastic(Integrator):
         @nb.njit(
             nb.types.UniTuple(nb.f8[:, :], 2)(nb.f8[:, :], nb.f8[:, :]),
             cache=NUMBA_CACHE,
+            fastmath=NUMBA_FASTMATH,
+            nogil=NUMBA_NOGIL,
         )
         def scheme(state, coupling):
             d_state, observed = dfun(state, coupling)
@@ -66,6 +68,8 @@ class EulerStochastic(Integrator):
         @nb.njit(
             nb.types.UniTuple(nb.f8[:, :], 2)(nb.f8[:, :], nb.f8[:, :]),
             cache=NUMBA_CACHE,
+            fastmath=NUMBA_FASTMATH,
+            nogil=NUMBA_NOGIL,
         )
         def scheme(state, coupling):
             d_state, observed = dfun(state, coupling)

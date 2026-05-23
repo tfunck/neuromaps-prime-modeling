@@ -94,6 +94,10 @@ class GenericBEIDMF(LinearCouplingModel):
         state[1] = 0.001
         return state
 
+    def get_noise_template(self):
+        """Return the default state-variable noise template."""
+        return np.r_[1.0, 1.0]
+
     def get_numba_dfun(self):
         m = self.m.copy()
         P = self.P

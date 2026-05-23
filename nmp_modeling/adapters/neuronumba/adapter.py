@@ -124,7 +124,7 @@ class NeuronumbaAdapter:
                     f"{self.weights.shape[0]}"
                 )
 
-            attrs[p.target] = value
+            attrs[p.target] = float(value[0]) if value.size == 1 else value
 
         attrs.update(dict(theta.get("_model_attrs", {}) or {}))
         if attrs.get("auto_fic", False) and "J" in attrs:

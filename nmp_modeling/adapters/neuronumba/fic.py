@@ -9,11 +9,10 @@ _DECO_CURRENT_OFFSET = -0.026
 
 
 def _as_region_vector(value, n_nodes, name):
-    """Return a scalar or vector value as a region-level vector."""
-    arr = np.asarray(value, dtype=float)
-    if arr.ndim == 0:
-        return np.full(n_nodes, float(arr), dtype=float)
-    arr = arr.reshape(-1)
+    """Return a scalar, length-one array, or region-level vector as a vector."""
+    arr = np.asarray(value, dtype=float).reshape(-1)
+    if arr.size == 1:
+        return np.full(n_nodes, float(arr[0]), dtype=float)
     if arr.size != n_nodes:
         raise ValueError(f"{name} must be a scalar or have length {n_nodes}.")
     return arr.astype(float, copy=False)

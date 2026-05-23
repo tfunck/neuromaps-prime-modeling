@@ -160,11 +160,31 @@ class NeuronumbaAdapter:
         )
         return attrs
 
+    def _make_integrator(self, model):
+        """Create an Euler stochastic integrator for the current model."""
+        sigmas = _make_sigmas(self.sigma, model.n_state_vars)
+        return self._EulerStochastic(dt=self.dt, sigmas=sigmas)
+
+    def prepare_theta(self, theta, seed):
+        """Prepare theta once for one run seed."""
+        attrs = self._model_attrs_from_theta(theta)
+        model = self.model_class()
+        integrator = self._make_integrator(model)
+        attrs = self._maybe_compute_missing_j(attrs, integrator, seed)
+
+        if "J" not in attrs:
+            return theta
+
+        out = dict(theta)
+        model_attrs = dict(out.get("_model_attrs", {}) or {})
+        model_attrs["J"] = attrs["J"]
+        out["_model_attrs"] = model_attrs
+        return out
+
     def simulate(self, theta, seed):
         """Run one Neuronumba simulation."""
         model = self.model_class()
-        sigmas = _make_sigmas(self.sigma, model.n_state_vars)
-        integrator = self._EulerStochastic(dt=self.dt, sigmas=sigmas)
+        integrator = self._make_integrator(model)
         attrs = self._model_attrs_from_theta(theta)
         attrs = self._maybe_compute_missing_j(attrs, integrator, seed)
         model.set_attributes(attrs)

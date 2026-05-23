@@ -76,9 +76,22 @@ def _target_weights(targets, target_weights=None):
     return weights
 
 
+def _resolve_prepare_theta(adapter, prepare_theta):
+    """Use an explicit prepare_theta function or the adapter default if available."""
+    if prepare_theta is not None:
+        return prepare_theta
+
+    adapter_prepare = getattr(adapter, "prepare_theta", None)
+    if adapter_prepare is None:
+        return None
+    if not callable(adapter_prepare):
+        raise TypeError("adapter.prepare_theta must be callable.")
+    return adapter_prepare
+
+
 def _subject_seeds(run_seed, n_subjects):
     """Generate deterministic subject seeds from one run seed."""
-    return [int(run_seed) * 100000 + i for i in range(n_subjects)]
+    return [int(run_seed) * 1000 + i for i in range(n_subjects)]
 
 
 def evaluate_theta(
@@ -88,12 +101,14 @@ def evaluate_theta(
     n_subjects=1,
     run_seeds=(0,),
     target_weights=None,
+    prepare_theta=None,
 ):
     """Evaluate one parameter setting across targets, seeds, and subjects."""
     targets = _as_list(targets)
     run_seeds = list(run_seeds)
     weights = _target_weights(targets, target_weights)
     names = _target_names(targets)
+    prepare_theta = _resolve_prepare_theta(adapter, prepare_theta)
 
     if n_subjects < 1:
         raise ValueError("n_subjects must be at least 1.")
@@ -104,10 +119,16 @@ def evaluate_theta(
     target_losses = np.zeros((len(run_seeds), len(targets)), dtype=float)
 
     for r, run_seed in enumerate(run_seeds):
+        run_theta = dict(theta)
+        if prepare_theta is not None:
+            run_theta = prepare_theta(run_theta, run_seed)
+            if run_theta is None:
+                raise ValueError("prepare_theta must return a theta dictionary.")
+
         values_by_target = [[] for _ in targets]
 
         for subject_seed in _subject_seeds(run_seed, n_subjects):
-            simulated = adapter.simulate(theta, subject_seed)
+            simulated = adapter.simulate(run_theta, subject_seed)
 
             for k, target in enumerate(targets):
                 values_by_target[k].append(target.observable(simulated))
@@ -136,6 +157,7 @@ def grid_sweep(
     n_subjects=1,
     run_seeds=(0,),
     target_weights=None,
+    prepare_theta=None,
     verbose=True,
 ):
     """Run a simple grid sweep using EmpiricalTarget objects."""
@@ -179,6 +201,7 @@ def grid_sweep(
             n_subjects=n_subjects,
             run_seeds=run_seeds,
             target_weights=weights,
+            prepare_theta=prepare_theta,
         )
 
         losses[idx] = result.loss

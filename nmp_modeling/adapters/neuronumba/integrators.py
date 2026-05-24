@@ -17,20 +17,19 @@ class EulerStochastic(Integrator):
 
     def get_numba_scheme(self, dfun):
         dt = self.dt
-        stimulus = np.zeros((1, 1))
         sigmas = np.asarray(self.sigmas, dtype=np.float64)
         sqrt_dt = self._sqrt_dt
 
         if sigmas.ndim == 1:
-            return self._get_numba_scheme_1d(dfun, dt, stimulus, sigmas, sqrt_dt)
+            return self._get_numba_scheme_1d(dfun, dt, sigmas, sqrt_dt)
 
         if sigmas.ndim == 2:
-            return self._get_numba_scheme_2d(dfun, dt, stimulus, sigmas, sqrt_dt)
+            return self._get_numba_scheme_2d(dfun, dt, sigmas, sqrt_dt)
 
         raise ValueError("sigmas must be a 1D or 2D array.")
 
     @staticmethod
-    def _get_numba_scheme_1d(dfun, dt, stimulus, sigmas, sqrt_dt):
+    def _get_numba_scheme_1d(dfun, dt, sigmas, sqrt_dt):
         """Return a scheme for state-variable-specific noise."""
 
         @nb.njit(
@@ -41,9 +40,6 @@ class EulerStochastic(Integrator):
         )
         def scheme(state, coupling):
             d_state, observed = dfun(state, coupling)
-
-            if stimulus.shape[1] == state.shape[1]:
-                d_state = d_state + stimulus
 
             noise = np.zeros(state.shape)
             n_rois = state.shape[1]
@@ -62,7 +58,7 @@ class EulerStochastic(Integrator):
         return scheme
 
     @staticmethod
-    def _get_numba_scheme_2d(dfun, dt, stimulus, sigmas, sqrt_dt):
+    def _get_numba_scheme_2d(dfun, dt, sigmas, sqrt_dt):
         """Return a scheme for state-variable-by-ROI-specific noise."""
 
         @nb.njit(
@@ -73,9 +69,6 @@ class EulerStochastic(Integrator):
         )
         def scheme(state, coupling):
             d_state, observed = dfun(state, coupling)
-
-            if stimulus.shape[1] == state.shape[1]:
-                d_state = d_state + stimulus
 
             noise = np.zeros(state.shape)
 

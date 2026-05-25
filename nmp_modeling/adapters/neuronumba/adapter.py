@@ -169,6 +169,15 @@ class NeuronumbaAdapter:
             names.update(p.free_params.keys())
         return sorted(names)
 
+    def _resolve_auto_fic(self, attrs):
+        """Return the effective auto_fic setting for the current model attrs."""
+        model = self.model_class()
+        if not hasattr(model, "auto_fic"):
+            return None
+        if "auto_fic" in attrs:
+            return bool(attrs["auto_fic"])
+        return bool(getattr(model, "auto_fic"))
+
     def _model_attrs_from_theta(self, theta):
         """Build model attributes and optional sigma values from theta."""
         if self.g_param not in theta:
@@ -211,7 +220,8 @@ class NeuronumbaAdapter:
             attrs[p.target] = float(value[0]) if value.size == 1 else value
 
         attrs.update(dict(theta.get("_model_attrs", {}) or {}))
-        if attrs.get("auto_fic", False) and "J" in attrs:
+        auto_fic = self._resolve_auto_fic(attrs)
+        if auto_fic is True and "J" in attrs:
             raise ValueError(
                 "auto_fic=True but J is also provided. "
                 "Use auto_fic=True without J, or provide J with auto_fic=False."
@@ -221,14 +231,13 @@ class NeuronumbaAdapter:
 
     def _maybe_compute_missing_j(self, attrs, integrator, seed):
         """Compute J when auto_fic is False and no J is provided."""
-        model = self.model_class()
-        if not hasattr(model, "auto_fic"):
-            return attrs
-        if attrs.get("auto_fic", getattr(model, "auto_fic")):
+        auto_fic = self._resolve_auto_fic(attrs)
+        if auto_fic is None or auto_fic:
             return attrs
         if "J" in attrs:
             return attrs
 
+        model = self.model_class()
         model.set_attributes(attrs)
         attrs["J"] = compute_j(
             model=model,

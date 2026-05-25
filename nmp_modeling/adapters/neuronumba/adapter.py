@@ -50,6 +50,20 @@ def _make_sigmas(sigma, model, n_rois):
 
     if arr.ndim == 1:
         values = arr.reshape(-1)
+
+        state_matches = []
+        if values.size == n_active:
+            state_matches.append(f"n_active={n_active}")
+        if values.size == n_state_vars:
+            state_matches.append(f"n_state_vars={n_state_vars}")
+        if values.size == n_rois and state_matches:
+            raise ValueError(
+                f"Ambiguous 1D sigma length {values.size}: it matches "
+                f"n_rois={n_rois} and {', '.join(state_matches)}. "
+                "Pass a 2D array with shape (n_active, n_rois) or "
+                "(n_state_vars, n_rois) to specify ROI-specific sigmas."
+            )
+
         if values.size == n_active:
             out = np.zeros(n_state_vars, dtype=float)
             out[active] = values
@@ -79,8 +93,9 @@ def _make_sigmas(sigma, model, n_rois):
             return arr * (template != 0.0)[:, None]
 
     raise ValueError(
-        "sigma must be scalar, length n_active, length n_rois, "
-        "shape (n_active, n_rois), or full state-by-ROI shape."
+        "sigma must be scalar, length n_active, length n_state_vars, "
+        "length n_rois, length n_active*n_rois, length n_state_vars*n_rois, "
+        "shape (n_active, n_rois), or shape (n_state_vars, n_rois)."
     )
 
 

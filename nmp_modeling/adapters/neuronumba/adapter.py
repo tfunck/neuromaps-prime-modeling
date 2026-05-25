@@ -1,6 +1,9 @@
 import numpy as np
 from nmp_modeling.parametrization import MapParametrization
 from nmp_modeling.adapters.neuronumba.fic import compute_j
+from nmp_modeling.adapters.neuronumba.integrators import EulerStochastic
+
+_NOISE_TARGETS = {"sigma", "sigmas"}
 
 def _get_model_class(model):
     """Return the Neuronumba model class from a model name or class."""
@@ -17,16 +20,68 @@ def _default_obs_var(model_class):
         return "re"
     return None
 
-def _make_sigmas(sigma, n_state_vars):
-    """Convert scalar or vector sigma to a vector matching state variables."""
-    sigmas = np.asarray(sigma, dtype=float).reshape(-1)
-    if sigmas.size == 1:
-        return np.repeat(sigmas[0], n_state_vars)
-    if sigmas.size != n_state_vars:
+def _noise_template(model):
+    """Return the model noise template as a 1D float array."""
+    if hasattr(model, "get_noise_template"):
+        template = np.asarray(model.get_noise_template(), dtype=float).reshape(-1)
+    else:
+        template = np.ones(model.n_state_vars, dtype=float)
+
+    if template.size != model.n_state_vars:
         raise ValueError(
-            f"sigma must be scalar or length {n_state_vars}, got {sigmas.size}"
+            "Noise template length must match the number of state variables."
         )
-    return sigmas
+    return template
+
+def _make_sigmas(sigma, model, n_rois):
+    """Convert user sigma input to full state-by-ROI-compatible sigmas."""
+    template = _noise_template(model)
+    active = np.flatnonzero(template != 0.0)
+    n_state_vars = model.n_state_vars
+    n_active = active.size
+
+    if n_active == 0:
+        return np.zeros(n_state_vars, dtype=float)
+
+    arr = np.asarray(sigma, dtype=float)
+
+    if arr.ndim == 0 or arr.size == 1:
+        return float(arr.reshape(-1)[0]) * template
+
+    if arr.ndim == 1:
+        values = arr.reshape(-1)
+        if values.size == n_active:
+            out = np.zeros(n_state_vars, dtype=float)
+            out[active] = values
+            return out
+        if values.size == n_state_vars:
+            return values * (template != 0.0)
+        if values.size == n_rois:
+            out = np.zeros((n_state_vars, n_rois), dtype=float)
+            out[active, :] = values[None, :]
+            return out
+        if values.size == n_active * n_rois:
+            active_matrix = values.reshape(n_active, n_rois)
+            out = np.zeros((n_state_vars, n_rois), dtype=float)
+            out[active, :] = active_matrix
+            return out
+        if values.size == n_state_vars * n_rois:
+            out = values.reshape(n_state_vars, n_rois)
+            out = out * (template != 0.0)[:, None]
+            return out
+
+    if arr.ndim == 2:
+        if arr.shape == (n_active, n_rois):
+            out = np.zeros((n_state_vars, n_rois), dtype=float)
+            out[active, :] = arr
+            return out
+        if arr.shape == (n_state_vars, n_rois):
+            return arr * (template != 0.0)[:, None]
+
+    raise ValueError(
+        "sigma must be scalar, length n_active, length n_rois, "
+        "shape (n_active, n_rois), or full state-by-ROI shape."
+    )
 
 
 class NeuronumbaAdapter:
@@ -51,7 +106,6 @@ class NeuronumbaAdapter:
         fic_max_trials=5000,
         fic_tolerance=0.005,
     ):
-        from neuronumba.simulator.integrators.euler import EulerStochastic
         from neuronumba.simulator.simulator import simulate_nodelay
         from neuronumba.bold.stephan_2007 import BoldStephan2007
         from neuronumba.tools.random import set_seed
@@ -101,12 +155,18 @@ class NeuronumbaAdapter:
         return sorted(names)
 
     def _model_attrs_from_theta(self, theta):
-        """Build model attributes from fixed attributes and parametrizations."""
+        """Build model attributes and optional sigma values from theta."""
         if self.g_param not in theta:
             raise KeyError(f"Missing global coupling parameter: {self.g_param}")
 
         attrs = dict(self.fixed_model_attrs)
         attrs["g"] = float(theta[self.g_param])
+
+        sigma_value = None
+        if "sigmas" in theta:
+            sigma_value = theta["sigmas"]
+        elif "sigma" in theta:
+            sigma_value = theta["sigma"]
 
         for p in self.parametrizations:
             missing = set(p.free_params) - set(theta)
@@ -116,7 +176,16 @@ class NeuronumbaAdapter:
                 )
 
             free_values = {k: theta[k] for k in p.free_params}
-            value = np.asarray(p.evaluate(free_values), dtype=float).reshape(-1)
+            raw_value = np.asarray(p.evaluate(free_values), dtype=float)
+            if p.target in _NOISE_TARGETS:
+                if sigma_value is not None:
+                    raise ValueError(
+                        "Noise was provided both directly in theta and by "
+                        "a MapParametrization target."
+                    )
+                sigma_value = raw_value
+                continue
+            value = raw_value.reshape(-1)
 
             if value.size not in (1, self.weights.shape[0]):
                 raise ValueError(
@@ -133,7 +202,7 @@ class NeuronumbaAdapter:
                 "Use auto_fic=True without J, or provide J with auto_fic=False."
             )
 
-        return attrs
+        return attrs, sigma_value
 
     def _maybe_compute_missing_j(self, attrs, integrator, seed):
         """Compute J when auto_fic is False and no J is provided."""
@@ -160,16 +229,17 @@ class NeuronumbaAdapter:
         )
         return attrs
 
-    def _make_integrator(self, model):
+    def _make_integrator(self, model, sigma_value=None):
         """Create an Euler stochastic integrator for the current model."""
-        sigmas = _make_sigmas(self.sigma, model.n_state_vars)
+        sigma = self.sigma if sigma_value is None else sigma_value
+        sigmas = _make_sigmas(sigma, model, self.weights.shape[0])
         return self._EulerStochastic(dt=self.dt, sigmas=sigmas)
 
     def prepare_theta(self, theta, seed):
         """Prepare theta once for one run seed."""
-        attrs = self._model_attrs_from_theta(theta)
+        attrs, sigma_value = self._model_attrs_from_theta(theta)
         model = self.model_class()
-        integrator = self._make_integrator(model)
+        integrator = self._make_integrator(model, sigma_value)
         attrs = self._maybe_compute_missing_j(attrs, integrator, seed)
 
         if "J" not in attrs:
@@ -183,9 +253,9 @@ class NeuronumbaAdapter:
 
     def simulate(self, theta, seed):
         """Run one Neuronumba simulation."""
+        attrs, sigma_value = self._model_attrs_from_theta(theta)
         model = self.model_class()
-        integrator = self._make_integrator(model)
-        attrs = self._model_attrs_from_theta(theta)
+        integrator = self._make_integrator(model, sigma_value)
         attrs = self._maybe_compute_missing_j(attrs, integrator, seed)
         model.set_attributes(attrs)
 

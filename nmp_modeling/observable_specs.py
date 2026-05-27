@@ -4,6 +4,7 @@ import numpy as np
 
 from nmp_modeling import objectives
 from nmp_modeling import observables
+from nmp_modeling.data import infer_data_info, subject_data
 
 
 VALID_INPUT_TYPES = {
@@ -254,10 +255,35 @@ class EmpiricalTarget:
     params: dict = field(default_factory=dict)
     label: str = None
     preprocess: object = None
+    _data_info: object = field(default=None, init=False, repr=False)
+    _value: object = field(default=None, init=False, repr=False)
+    _values_by_count: dict = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self):
+        """Initialize target label and empirical data metadata."""
         if self.label is None:
             self.label = self.spec.name
+        self._data_info = infer_data_info(self.data, self.input_type)
+
+    @property
+    def n_subjects(self):
+        """Return the number of empirical subjects."""
+        return self._data_info.n_subjects
+
+    @property
+    def n_nodes(self):
+        """Return the number of nodes if known."""
+        return self._data_info.n_nodes
+
+    @property
+    def n_timepoints(self):
+        """Return the number of time points if known."""
+        return self._data_info.n_timepoints
+
+    @property
+    def is_subjectwise(self):
+        """Return whether empirical data has an explicit subject axis."""
+        return self._data_info.has_subject_axis
 
     def _preprocess(self, data):
         """Apply target-level preprocessing to time series data."""
@@ -266,20 +292,58 @@ class EmpiricalTarget:
         arr = np.asarray(data, dtype=float)
         return self.preprocess(arr.copy())
 
-    _value: object = field(default=None, init=False, repr=False)
+    def _empirical_observable_for_subject(self, subject_index):
+        """Compute one subject-level empirical observable."""
+        data = subject_data(self.data, self.input_type, subject_index)
+        if self.input_type == "timeseries":
+            data = self._preprocess(data)
+        return self.spec.empirical_fn(
+            data,
+            self.input_type,
+            **self.params,
+        )
+
+    def empirical_value(self, n_subjects=None):
+        """Return the aggregated empirical observable value."""
+        self.spec.validate_input_type(self.input_type)
+
+        if not self.is_subjectwise:
+            if self._value is None:
+                data = (
+                    self._preprocess(self.data)
+                    if self.input_type == "timeseries"
+                    else self.data
+                )
+                self._value = self.spec.empirical_fn(
+                    data,
+                    self.input_type,
+                    **self.params,
+                )
+            return self._value
+
+        count = self.n_subjects if n_subjects is None else int(n_subjects)
+        if count < 1:
+            raise ValueError("n_subjects must be at least 1.")
+        if count > self.n_subjects:
+            raise ValueError(
+                f"Requested {count} subjects, but empirical target "
+                f"'{self.label}' only has {self.n_subjects}."
+            )
+        if count not in self._values_by_count:
+            values = [
+                self._empirical_observable_for_subject(i)
+                for i in range(count)
+            ]
+            self._values_by_count[count] = self.spec.aggregate_fn(
+                values,
+                **self.params,
+            )
+        return self._values_by_count[count]
 
     @property
     def value(self):
-        """Return cached empirical observable value."""
-        if self._value is None:
-            self.spec.validate_input_type(self.input_type)
-            data = self._preprocess(self.data) if self.input_type == "timeseries" else self.data
-            self._value = self.spec.empirical_fn(
-                data,
-                self.input_type,
-                **self.params,
-            )
-        return self._value
+        """Return cached empirical observable value using all empirical subjects."""
+        return self.empirical_value()
 
     @property
     def empirical_target(self):

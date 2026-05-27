@@ -94,11 +94,56 @@ def _subject_seeds(run_seed, n_subjects):
     return [int(run_seed) * 1000 + i for i in range(n_subjects)]
 
 
+def _target_subject_counts(targets):
+    """Return subject counts from subject-wise empirical targets."""
+    counts = []
+    for target in targets:
+        if getattr(target, "is_subjectwise", False):
+            counts.append(int(target.n_subjects))
+    return counts
+
+
+def _resolve_n_subjects(targets, n_subjects):
+    """Resolve the number of simulated subjects."""
+    counts = _target_subject_counts(targets)
+
+    if n_subjects is not None:
+        n = int(n_subjects)
+        if n < 1:
+            raise ValueError("n_subjects must be at least 1.")
+        too_small = [count for count in counts if count < n]
+        if too_small:
+            raise ValueError(
+                f"Requested n_subjects={n}, but at least one empirical "
+                f"target has fewer subjects: {too_small}."
+            )
+        return n
+
+    if not counts:
+        return 1
+
+    unique_counts = sorted(set(counts))
+    if len(unique_counts) != 1:
+        raise ValueError(
+            "Subject-wise empirical targets must have the same number of "
+            f"subjects when n_subjects is not specified. Got {unique_counts}."
+        )
+    return unique_counts[0]
+
+
+def _empirical_values(targets, n_subjects):
+    """Return empirical target values matched to the simulated subject count."""
+    values = []
+    for target in targets:
+        values.append(target.empirical_value(n_subjects=n_subjects))
+    return values
+
+
 def evaluate_theta(
     adapter,
     theta,
     targets,
-    n_subjects=1,
+    n_subjects=None,
     run_seeds=(0,),
     target_weights=None,
     prepare_theta=None,
@@ -109,9 +154,8 @@ def evaluate_theta(
     weights = _target_weights(targets, target_weights)
     names = _target_names(targets)
     prepare_theta = _resolve_prepare_theta(adapter, prepare_theta)
-
-    if n_subjects < 1:
-        raise ValueError("n_subjects must be at least 1.")
+    n_subjects = _resolve_n_subjects(targets, n_subjects)
+    empirical_values = _empirical_values(targets, n_subjects)
     if len(run_seeds) == 0:
         raise ValueError("At least one run seed is required.")
 
@@ -135,7 +179,10 @@ def evaluate_theta(
 
         for k, target in enumerate(targets):
             aggregated = target.aggregate_observable(values_by_target[k])
-            target_losses[r, k] = target.distance(aggregated)
+            target_losses[r, k] = target.distance(
+                aggregated,
+                empirical_values[k],
+            )
 
         run_losses[r] = float(np.sum(weights * target_losses[r]))
 
@@ -154,7 +201,7 @@ def grid_sweep(
     free_grid,
     fixed,
     targets,
-    n_subjects=1,
+    n_subjects=None,
     run_seeds=(0,),
     target_weights=None,
     prepare_theta=None,

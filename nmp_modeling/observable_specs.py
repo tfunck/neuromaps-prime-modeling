@@ -340,16 +340,6 @@ class EmpiricalTarget:
             )
         return self._values_by_count[count]
 
-    @property
-    def value(self):
-        """Return cached empirical observable value using all empirical subjects."""
-        return self.empirical_value()
-
-    @property
-    def empirical_target(self):
-        """Alias for fitting code."""
-        return self.value
-
     def observable(self, simulated_data):
         """Compute the matching observable from simulated data."""
         data = self._preprocess(simulated_data)
@@ -368,7 +358,7 @@ class EmpiricalTarget:
     def distance(self, simulated_value, empirical_value=None):
         """Compute distance between simulated and empirical observables."""
         if empirical_value is None:
-            empirical_value = self.value
+            empirical_value = self.empirical_value()
 
         return self.spec.distance_fn(
             simulated_value,

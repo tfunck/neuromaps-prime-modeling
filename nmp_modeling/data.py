@@ -20,6 +20,20 @@ class DataInfo:
     has_subject_axis: bool = False
 
 
+def infer_input_type(data):
+    """Infer a likely input_type from array shape."""
+    arr = np.asarray(data)
+    if arr.ndim == 2:
+        if arr.shape[0] == arr.shape[1]:
+            return "fc"
+        return "timeseries"
+    if arr.ndim == 3:
+        if arr.shape[1] == arr.shape[2]:
+            return "fc"
+        return "timeseries"
+    return "observable"
+
+
 def infer_data_info(data, input_type):
     """Infer subject, node, and time dimensions from empirical input data."""
     if input_type not in VALID_INPUT_TYPES:

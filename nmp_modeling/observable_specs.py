@@ -4,7 +4,7 @@ import numpy as np
 
 from nmp_modeling import objectives
 from nmp_modeling import observables
-from nmp_modeling.data import infer_data_info, subject_data
+from nmp_modeling.data import infer_input_type, infer_data_info, subject_data
 
 
 VALID_INPUT_TYPES = {
@@ -497,7 +497,7 @@ def get_observable_spec(name):
 def make_empirical_target(
     data,
     observable,
-    input_type="timeseries",
+    input_type=None,
     label=None,
     preprocess=None,
     **params,
@@ -528,6 +528,8 @@ def make_empirical_target(
 
     spec = get_observable_spec(spec_name)
     resolved_params = spec.resolve_params(observable_params)
+    if input_type is None:
+        input_type = infer_input_type(data)
     spec.validate_input_type(input_type)
 
     return EmpiricalTarget(
@@ -540,7 +542,7 @@ def make_empirical_target(
     )
 
 
-def make_empirical_targets(data, observables, input_type="timeseries", **shared_params):
+def make_empirical_targets(data, observables, input_type=None, **shared_params):
     """Create multiple empirical targets from the same empirical data."""
     targets = []
 

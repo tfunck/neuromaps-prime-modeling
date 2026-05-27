@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 
+from nmp_modeling.data import infer_input_type
+
 
 @dataclass(frozen=True)
 class LoadedData:
@@ -38,20 +40,6 @@ def load_data(path, input_type=None, key=None, tr=None):
         metadata={},
         source=str(path),
     )
-
-
-def infer_input_type(data):
-    """Infer a likely input_type from array shape."""
-    arr = np.asarray(data)
-    if arr.ndim == 2:
-        if arr.shape[0] == arr.shape[1]:
-            return "fc"
-        return "timeseries"
-    if arr.ndim == 3:
-        if arr.shape[1] == arr.shape[2]:
-            return "fc"
-        return "timeseries"
-    return "observable"
 
 
 def _full_suffix(path):

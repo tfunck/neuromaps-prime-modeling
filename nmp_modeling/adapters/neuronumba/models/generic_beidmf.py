@@ -4,10 +4,21 @@
 # Default behavior is equivalent to the Deco2014 / Deco2018 two-population
 # balanced excitation-inhibition dynamic mean-field model.
 #
-# Heterogeneity can be introduced through:
-#   1. Firing-rate gain modulation: M_e, M_i, gain_map_e, gain_map_i
-#   2. Local synaptic weights: w_ee, w_ei, w_ie, w_ii
-#   3. Static gating parameters: taon, taog, gamma_e, gamma_i
+# Regional heterogeneity can be introduced through:
+#   1. Firing-rate gain modulation:
+#      M_e, M_i, gain_e/gain_map_e, gain_i/gain_map_i
+#   2. Local synaptic and current parameters:
+#      J_NMDA, J, w_ee, w_ei, w_ie, w_ii
+#   3. External input and baseline current parameters:
+#      I0, Jext_e, Jext_i, I_external
+#   4. Firing-rate transfer function parameters:
+#      ae, be, de, ai, bi, di
+#   5. Static synaptic gating parameters:
+#      taon, taog, gamma_e, gamma_i
+#
+# Most model parameters are declared as regional attributes, so they can be
+# provided either as scalars or as ROI-level vectors when such heterogeneity is
+# scientifically justified.
 # ==========================================================================
 import numpy as np
 import numba as nb
@@ -31,7 +42,7 @@ class GenericBEIDMF(LinearCouplingModel):
     auto_fic = Attr(default=False)
 
     # ----------------------------------------------------------------------
-    # Static gating dynamics
+    # Static synaptic gating parameters
     # ----------------------------------------------------------------------
     taon = Attr(default=100.0, attributes=Model.Tag.REGIONAL)      # NMDA characteristic time (ms), E population time constant
     taog = Attr(default=10.0, attributes=Model.Tag.REGIONAL)       # GABA characteristic time (ms), I population time constant
@@ -47,7 +58,7 @@ class GenericBEIDMF(LinearCouplingModel):
     I_external = Attr(default=0.0, attributes=Model.Tag.REGIONAL)  # Additional external current to E population
 
     # ----------------------------------------------------------------------
-    # Local synaptic weights
+    # Local synaptic and current parameters
     # ----------------------------------------------------------------------
     J_NMDA = Attr(default=0.15, attributes=Model.Tag.REGIONAL)     # NMDA current scale (nA)
     J = Attr(default=1.0, attributes=Model.Tag.REGIONAL)           # FIC inhibitory feedback strength

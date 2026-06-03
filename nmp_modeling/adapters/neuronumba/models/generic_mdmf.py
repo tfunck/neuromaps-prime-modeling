@@ -1,16 +1,29 @@
 # ==========================================================================
-# Generic heterogeneous multiscale dynamic mean-field model for neuronumba
+# Generic three-state heterogeneous MDMF model for neuronumba
 #
-# Default behavior follows the Naskar et al. 2021 MDMF model:
+# Default behavior follows the Naskar et al. 2021 multiscale dynamic
+# mean-field model:
 #   - Deco2014-style excitatory and inhibitory population currents
 #   - neurotransmitter-dependent synaptic gating kinetics
-#   - local inhibitory plasticity as a dynamic J state
+#   - local inhibitory plasticity implemented as a dynamic J state
 #
-# Heterogeneity can be introduced through:
-#   1. Neurotransmitter kinetic parameters: t_glu, t_gaba, alpha_e/i, beta_e/i
-#   2. Firing-rate gain modulation: M_e, M_i, gain_map_e, gain_map_i
-#   3. Local synaptic weights: w_ee, w_ei, w_ie, w_ii
-#   4. Plasticity parameters: plasticity_gamma, rho, J_init
+# Regional heterogeneity can be introduced through:
+#   1. Neurotransmitter concentration and receptor-binding kinetics:
+#      t_glu, t_gaba, alpha_e, beta_e, alpha_i, beta_i
+#   2. Firing-rate gain modulation:
+#      M_e, M_i, gain_e/gain_map_e, gain_i/gain_map_i
+#   3. Local synaptic and current parameters:
+#      J_NMDA, w_ee, w_ei, w_ie, w_ii
+#   4. External input and baseline current parameters:
+#      I0, Jext_e, Jext_i, I_external
+#   5. Firing-rate transfer function parameters:
+#      ae, be, de, ai, bi, di
+#   6. Inhibitory plasticity parameters:
+#      J_init, plasticity_gamma, rho
+#
+# The original Naskar et al. model used spatially uniform GABA and glutamate
+# concentrations. This generic implementation allows ROI-level values when
+# such heterogeneity is explicitly intended.
 # ==========================================================================
 import numpy as np
 import numba as nb
@@ -35,7 +48,7 @@ class GenericMDMF(LinearCouplingModel):
     }
 
     # ----------------------------------------------------------------------
-    # Neurotransmitter-dependent synaptic gating dynamics
+    # Neurotransmitter-dependent synaptic gating parameters
     # ----------------------------------------------------------------------
     t_glu = Attr(default=7.46, attributes=Model.Tag.REGIONAL)      # Glutamate concentration
     t_gaba = Attr(default=1.82, attributes=Model.Tag.REGIONAL)     # GABA concentration
@@ -53,7 +66,7 @@ class GenericMDMF(LinearCouplingModel):
     I_external = Attr(default=0.0, attributes=Model.Tag.REGIONAL)  # Additional external current to E population
 
     # ----------------------------------------------------------------------
-    # Local synaptic weights
+    # Local synaptic and current parameters
     # ----------------------------------------------------------------------
     J_NMDA = Attr(default=0.15, attributes=Model.Tag.REGIONAL)     # NMDA current scale (nA)
 

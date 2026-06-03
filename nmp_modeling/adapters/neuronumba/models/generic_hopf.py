@@ -1,0 +1,172 @@
+# ==========================================================================
+# Generic heterogeneous Hopf whole-brain model for neuronumba
+#
+# Default behavior follows the standard Hopf / Stuart-Landau whole-brain
+# model commonly used in fMRI modeling:
+#
+#   dz_i/dt = (a_i + i omega_i) z_i - |z_i|^2 z_i
+#             + g * sum_j C_ij * (z_j - z_i) + I_i + noise
+#
+# The standard whole-brain Hopf equation is usually written with time in seconds.
+# To remain compatible with the rest of the Neuronumba/nmp_modeling simulator,
+# this implementation still expects the integrator time step to be in milliseconds.
+#
+# Users provide Hopf parameters in the usual published-model units:
+#   a:            local growth/decay rate, s^-1
+#   g:            global coupling rate, s^-1
+#   frequency_hz: intrinsic frequency, cycles per second
+#
+# The deterministic right-hand side is converted internally from per-second
+# to per-millisecond before it is returned to the integrator.
+# ==========================================================================
+import numpy as np
+import numba as nb
+
+from neuronumba.basic.attr import Attr
+from neuronumba.numba_tools.types import NDA_f8_2d
+from neuronumba.numba_tools.config import NUMBA_CACHE, NUMBA_FASTMATH, NUMBA_NOGIL
+from neuronumba.simulator.models.model import Model
+
+SEC_TO_MS = 1000.0
+TWO_PI = 2.0 * np.pi
+
+
+def _as_region_vector(value, n_rois, name):
+    """Return a scalar or regional value as a vector of length n_rois."""
+    arr = np.asarray(value, dtype=float).reshape(-1)
+
+    if arr.size == 1:
+        return np.full(n_rois, float(arr[0]), dtype=float)
+
+    if arr.size != n_rois:
+        raise ValueError(f"{name} must be a scalar or have length {n_rois}.")
+
+    return arr.astype(float, copy=False)
+
+
+class GenericHopf(Model):
+    _state_var_names = ["x", "y"]
+    _coupling_var_names = ["x", "y"]
+    _observable_var_names = []
+
+    # ----------------------------------------------------------------------
+    # Hopf local dynamics
+    # ----------------------------------------------------------------------
+    a = Attr(default=-0.02, attributes=Model.Tag.REGIONAL)
+    frequency_hz = Attr(default=0.05, attributes=Model.Tag.REGIONAL)
+
+    # ----------------------------------------------------------------------
+    # Static external input.
+    # Together, I_external + i * I_external_y can represent a complex input.
+    # If only I_external is provided, the input is applied to x only.
+    # ----------------------------------------------------------------------
+    I_external = Attr(default=0.0, attributes=Model.Tag.REGIONAL)
+    I_external_y = Attr(default=0.0, attributes=Model.Tag.REGIONAL)
+
+    # ----------------------------------------------------------------------
+    # Global diffusive coupling strength.
+    # The parameter is exposed in literature units, s^-1.
+    # ----------------------------------------------------------------------
+    g = Attr(default=1.0)
+
+    weights_t = Attr(dependant=True)
+    row_strength = Attr(dependant=True)
+
+    def _init_dependant(self):
+        super()._init_dependant()
+        self.weights_t = self.weights.T.copy()
+        self.row_strength = self.weights.sum(axis=1).copy()
+
+    def initial_state(self, n_rois):
+        state = np.empty((GenericHopf.n_state_vars, n_rois))
+        state[0] = 0.1
+        state[1] = 0.1
+        return state
+
+    def get_noise_template(self):
+        """Return the default state-variable noise template."""
+        return np.r_[1.0, 1.0]
+
+    def get_numba_coupling(self):
+        weights_t = self.weights_t.copy()
+        row_strength = self.row_strength.copy()
+        g_per_ms = self.g / SEC_TO_MS
+
+        @nb.njit(
+            nb.f8[:, :](nb.f8[:, :]),
+            cache=NUMBA_CACHE,
+            fastmath=NUMBA_FASTMATH,
+            nogil=NUMBA_NOGIL,
+        )
+        def GenericHopf_coupling(state):
+            incoming = np.dot(state, weights_t)
+            return g_per_ms * (incoming - row_strength * state)
+
+        return GenericHopf_coupling
+
+    def get_numba_dfun(self):
+        m = self.m.copy()
+        P = self.P
+
+        @nb.njit(
+            nb.types.UniTuple(nb.f8[:, :], 2)(nb.f8[:, :], nb.f8[:, :]),
+            cache=NUMBA_CACHE,
+            fastmath=NUMBA_FASTMATH,
+            nogil=NUMBA_NOGIL,
+        )
+        def GenericHopf_dfun(state: NDA_f8_2d, coupling: NDA_f8_2d):
+            x = state[0, :]
+            y = state[1, :]
+
+            a = m[np.intp(P.a)]
+            omega = TWO_PI * m[np.intp(P.frequency_hz)]
+
+            amp2 = x * x + y * y
+
+            dx_local = (
+                (a - amp2) * x
+                - omega * y
+                + m[np.intp(P.I_external)]
+            ) / SEC_TO_MS
+
+            dy_local = (
+                (a - amp2) * y
+                + omega * x
+                + m[np.intp(P.I_external_y)]
+            ) / SEC_TO_MS
+
+            dx = dx_local + coupling[0, :]
+            dy = dy_local + coupling[1, :]
+
+            return np.stack((dx, dy)), np.empty((1, 1))
+
+        return GenericHopf_dfun
+
+    def get_jacobian(self, weights=None, unit="ms"):
+        """Return the linearized Hopf Jacobian around z = 0."""
+        C = self.weights if weights is None else np.asarray(weights, dtype=float)
+
+        if C.ndim != 2 or C.shape[0] != C.shape[1]:
+            raise ValueError("weights must be a square matrix.")
+
+        n_rois = C.shape[0]
+
+        a = _as_region_vector(self.a, n_rois, "a")
+        frequency_hz = _as_region_vector(self.frequency_hz, n_rois, "frequency_hz")
+        omega = TWO_PI * frequency_hz
+
+        row_strength = C.sum(axis=1)
+        Axx = np.diag(a) - float(self.g) * np.diag(row_strength) + float(self.g) * C
+        Ayy = Axx.copy()
+        Axy = -np.diag(omega)
+        Ayx = np.diag(omega)
+
+        A = np.block([[Axx, Axy], [Ayx, Ayy]])
+
+        if unit == "s":
+            return A
+
+        if unit == "ms":
+            return A / SEC_TO_MS
+
+        raise ValueError("unit must be 's' or 'ms'.")

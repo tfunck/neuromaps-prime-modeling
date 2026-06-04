@@ -34,13 +34,10 @@ TWO_PI = 2.0 * np.pi
 def _as_region_vector(value, n_rois, name):
     """Return a scalar or regional value as a vector of length n_rois."""
     arr = np.asarray(value, dtype=float).reshape(-1)
-
     if arr.size == 1:
         return np.full(n_rois, float(arr[0]), dtype=float)
-
     if arr.size != n_rois:
         raise ValueError(f"{name} must be a scalar or have length {n_rois}.")
-
     return arr.astype(float, copy=False)
 
 
@@ -56,6 +53,12 @@ class GenericHopf(Model):
     frequency_hz = Attr(default=0.05, attributes=Model.Tag.REGIONAL)
 
     # ----------------------------------------------------------------------
+    # Initial state
+    # ----------------------------------------------------------------------
+    x_init = Attr(default=0.1, attributes=Model.Tag.REGIONAL)
+    y_init = Attr(default=0.1, attributes=Model.Tag.REGIONAL)
+
+    # ----------------------------------------------------------------------
     # Static external input.
     # Together, I_external + i * I_external_y can represent a complex input.
     # If only I_external is provided, the input is applied to x only.
@@ -67,7 +70,7 @@ class GenericHopf(Model):
     # Global diffusive coupling strength.
     # The parameter is exposed in literature units, s^-1.
     # ----------------------------------------------------------------------
-    g = Attr(default=1.0)
+    g = Attr(required=True)
 
     weights_t = Attr(dependant=True)
     row_strength = Attr(dependant=True)
@@ -79,8 +82,8 @@ class GenericHopf(Model):
 
     def initial_state(self, n_rois):
         state = np.empty((GenericHopf.n_state_vars, n_rois))
-        state[0] = 0.1
-        state[1] = 0.1
+        state[0] = _as_region_vector(self.x_init, n_rois, "x_init")
+        state[1] = _as_region_vector(self.y_init, n_rois, "y_init")
         return state
 
     def get_noise_template(self):
@@ -145,10 +148,8 @@ class GenericHopf(Model):
     def get_jacobian(self, weights=None, unit="ms"):
         """Return the linearized Hopf Jacobian around z = 0."""
         C = self.weights if weights is None else np.asarray(weights, dtype=float)
-
         if C.ndim != 2 or C.shape[0] != C.shape[1]:
             raise ValueError("weights must be a square matrix.")
-
         n_rois = C.shape[0]
 
         a = _as_region_vector(self.a, n_rois, "a")
@@ -165,8 +166,6 @@ class GenericHopf(Model):
 
         if unit == "s":
             return A
-
         if unit == "ms":
             return A / SEC_TO_MS
-
         raise ValueError("unit must be 's' or 'ms'.")

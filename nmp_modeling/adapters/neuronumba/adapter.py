@@ -12,6 +12,10 @@ def _get_model_class(model):
             from .models.generic_beidmf import GenericBEIDMF
             return GenericBEIDMF
 
+        if model == "GenericMDMF":
+            from .models.generic_mdmf import GenericMDMF
+            return GenericMDMF
+
         if model == "GenericHopf":
             from .models.generic_hopf import GenericHopf
             return GenericHopf
@@ -22,7 +26,7 @@ def _get_model_class(model):
 
 def _default_obs_var(model_class):
     """Return the default observable variable for supported models."""
-    if model_class.__name__ == "GenericBEIDMF":
+    if model_class.__name__ == {"GenericBEIDMF", "GenericMDMF"}:
         return "re"
 
     if model_class.__name__ == "GenericHopf":

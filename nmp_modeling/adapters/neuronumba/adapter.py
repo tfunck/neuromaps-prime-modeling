@@ -11,14 +11,28 @@ def _get_model_class(model):
         if model == "GenericBEIDMF":
             from .models.generic_beidmf import GenericBEIDMF
             return GenericBEIDMF
+
+        if model == "GenericHopf":
+            from .models.generic_hopf import GenericHopf
+            return GenericHopf
+
         raise ValueError(f"Unknown Neuronumba model: {model}")
+
     return model
 
 def _default_obs_var(model_class):
     """Return the default observable variable for supported models."""
     if model_class.__name__ == "GenericBEIDMF":
         return "re"
+
+    if model_class.__name__ == "GenericHopf":
+        return "x"
+
     return None
+
+def _default_return_bold(model_class):
+    """Return whether the adapter should convert simulated signal to BOLD."""
+    return model_class.__name__ != "GenericHopf"
 
 def _noise_template(model):
     """Return the model noise template as a 1D float array."""
@@ -114,7 +128,7 @@ class NeuronumbaAdapter:
         sampling_period=1.0,
         tr=2000.0,
         obs_var=None,
-        return_bold=True,
+        return_bold=None,
         fic_target_rate=None,
         fic_t_max=10000.0,
         fic_t_warmup=0.0,
@@ -146,8 +160,10 @@ class NeuronumbaAdapter:
         self.sampling_period = float(sampling_period)
         self.tr = float(tr)
         self.obs_var = obs_var or _default_obs_var(self.model_class)
-        self.return_bold = bool(return_bold)
-
+        if return_bold is None:
+            self.return_bold = _default_return_bold(self.model_class)
+        else:
+            self.return_bold = bool(return_bold)
         if self.obs_var is None:
             raise ValueError("obs_var must be specified for this model.")
 
@@ -256,6 +272,10 @@ class NeuronumbaAdapter:
     def _make_integrator(self, model, sigma_value=None):
         """Create an Euler stochastic integrator for the current model."""
         sigma = self.sigma if sigma_value is None else sigma_value
+
+        if self.model_class.__name__ == "GenericHopf":
+            sigma = np.asarray(sigma, dtype=float) / np.sqrt(1000.0)
+
         sigmas = _make_sigmas(sigma, model, self.weights.shape[0])
         return self._EulerStochastic(dt=self.dt, sigmas=sigmas)
 

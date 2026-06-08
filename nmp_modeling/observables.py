@@ -135,3 +135,116 @@ def compute_phfcd_distribution(
             values.append(0.0 if denom == 0 else np.dot(patterns[i], patterns[j]) / denom)
 
     return np.asarray(values, dtype=float)
+
+
+def compute_lagged_covariance(
+    timeseries,
+    lag=1,
+    demean=True,
+    denominator="n_time",
+):
+    """Compute lagged covariance from source x(t) to target x(t + lag)."""
+    ts = check_time_series(timeseries)
+    lag = int(lag)
+    if lag < 1:
+        raise ValueError("lag must be at least 1.")
+    if lag >= ts.shape[0]:
+        raise ValueError("lag must be smaller than the number of time points.")
+
+    if demean:
+        ts = ts - np.mean(ts, axis=0, keepdims=True)
+
+    past = ts[:-lag]
+    future = ts[lag:]
+
+    if denominator == "n_time":
+        denom = ts.shape[0]
+    elif denominator == "n_valid":
+        denom = past.shape[0]
+    elif denominator == "unbiased":
+        denom = past.shape[0] - 1
+    else:
+        raise ValueError("denominator must be 'n_time', 'n_valid', or 'unbiased'.")
+    if denom <= 0:
+        raise ValueError("Invalid denominator for lagged covariance.")
+
+    return past.T @ future / denom
+
+
+def compute_lagged_correlation(
+    timeseries,
+    lag=1,
+    demean=True,
+    denominator="n_time",
+):
+    """Compute normalized lagged covariance from x(t) to x(t + lag)."""
+    ts = check_time_series(timeseries)
+    if demean:
+        ts = ts - np.mean(ts, axis=0, keepdims=True)
+
+    cov_lag = compute_lagged_covariance(
+        ts,
+        lag=lag,
+        demean=False,
+        denominator=denominator,
+    )
+
+    zero_var = np.diag(ts.T @ ts / (ts.shape[0] - 1))
+    if np.any(zero_var <= 0):
+        raise ValueError("Cannot normalize lagged covariance with zero variance.")
+
+    scale = np.sqrt(zero_var[:, None] * zero_var[None, :])
+    return cov_lag / scale
+
+
+def gaussian_mi_transform(matrix, eps=1e-12):
+    """Convert correlation-like values to Gaussian mutual information values."""
+    mat = np.asarray(matrix, dtype=float)
+    mat = np.clip(mat, -1.0 + eps, 1.0 - eps)
+    return -0.5 * np.log(1.0 - mat * mat)
+
+
+def compute_forward_reverse_lagged_correlation(
+    timeseries,
+    lag=1,
+    demean=True,
+    denominator="n_time",
+):
+    """Compute forward and time-reversed lagged correlations."""
+    ts = check_time_series(timeseries)
+
+    forward = compute_lagged_correlation(
+        ts,
+        lag=lag,
+        demean=demean,
+        denominator=denominator,
+    )
+    reverse = compute_lagged_correlation(
+        ts[::-1],
+        lag=lag,
+        demean=demean,
+        denominator=denominator,
+    )
+
+    return forward, reverse, forward - reverse
+
+
+def compute_forward_reverse_mi(
+    timeseries,
+    lag=1,
+    demean=True,
+    denominator="n_time",
+    eps=1e-12,
+):
+    """Compute MI-transformed forward and time-reversed lagged dependencies."""
+    forward, reverse, _ = compute_forward_reverse_lagged_correlation(
+        timeseries,
+        lag=lag,
+        demean=demean,
+        denominator=denominator,
+    )
+
+    forward_mi = gaussian_mi_transform(forward, eps=eps)
+    reverse_mi = gaussian_mi_transform(reverse, eps=eps)
+
+    return forward_mi, reverse_mi, forward_mi - reverse_mi

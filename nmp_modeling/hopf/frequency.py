@@ -10,16 +10,19 @@ def estimate_peak_frequency(
     band=(0.008, 0.08),
     order=2,
     smooth_sigma_hz=0.01,
+    trim=0,
+    normalize_by_variance=True,
 ):
     """Estimate regional Hopf frequencies from BOLD time series.
 
-    This follows the common Hopf/GEC practice used in the Luppi et al.
-    competitive-cooperative Hopf code:
+    The implementation follows the common Hopf/GEC FFT-peak practice:
       1. Demean, detrend, and band-pass filter each regional signal.
-      2. Compute the FFT power spectrum.
-      3. Average power spectra across subjects.
-      4. Smooth each regional spectrum with a Gaussian kernel.
-      5. Select the peak-power frequency for each region.
+      2. Optionally trim edge samples after filtering.
+      3. Compute the FFT power spectrum.
+      4. Optionally divide each regional spectrum by filtered signal variance.
+      5. Average power spectra across subjects.
+      6. Smooth each regional spectrum with a Gaussian kernel.
+      7. Select the peak-power frequency for each region.
 
     Input shape must be (time, nodes) or (subjects, time, nodes).
     Returned frequencies are in Hz.
@@ -32,8 +35,16 @@ def estimate_peak_frequency(
             "timeseries must have shape (time, nodes) or "
             "(subjects, time, nodes)."
         )
+    if tr_seconds <= 0:
+        raise ValueError("tr_seconds must be positive.")
+    trim = int(trim)
+    if trim < 0:
+        raise ValueError("trim must be non-negative.")
 
     n_subjects, n_time, n_nodes = arr.shape
+    n_used = n_time - 2 * trim
+    if n_used < 4:
+        raise ValueError("Not enough time points remain after trimming.")
 
     bandpass = make_bandpass_filter(
         low=band[0],
@@ -46,7 +57,7 @@ def estimate_peak_frequency(
         remove_artifacts=False,
     )
 
-    freqs = np.arange(n_time // 2) / (n_time * float(tr_seconds))
+    freqs = np.arange(n_used // 2) / (n_used * float(tr_seconds))
     search = (freqs >= band[0]) & (freqs <= band[1])
     if not np.any(search):
         raise ValueError("No FFT frequency bins fall within the requested band.")
@@ -54,10 +65,22 @@ def estimate_peak_frequency(
     power = np.zeros((freqs.size, n_nodes, n_subjects), dtype=float)
     for s in range(n_subjects):
         filtered = bandpass(arr[s])
+        if trim > 0:
+            filtered = filtered[trim:-trim]
+
         spectrum = np.fft.fft(filtered, axis=0)
-        power[:, :, s] = np.abs(spectrum[: freqs.size]) ** 2 / (
-            n_time / float(tr_seconds)
+        subject_power = np.abs(spectrum[: freqs.size]) ** 2 / (
+            n_used / float(tr_seconds)
         )
+        if normalize_by_variance:
+            variance = np.var(filtered, axis=0, ddof=1)
+            if np.any(variance <= 0):
+                raise ValueError(
+                    "Cannot normalize power spectrum with zero variance."
+                )
+            subject_power = subject_power / variance[None, :]
+        power[:, :, s] = subject_power
+
     mean_power = np.mean(power, axis=2)
 
     if smooth_sigma_hz > 0:

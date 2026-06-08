@@ -137,64 +137,40 @@ def compute_phfcd_distribution(
     return np.asarray(values, dtype=float)
 
 
-def compute_lagged_covariance(
-    timeseries,
-    lag=1,
-    demean=True,
-    denominator="n_time",
-):
-    """Compute lagged covariance from source x(t) to target x(t + lag)."""
+def compute_shifted_covariance(timeseries, lag=1, demean=True):
+    """Compute shifted covariance E[x(t + lag) x(t)^T].
+
+    The returned matrix uses rows for future nodes and columns for past nodes.
+    Element (i, j) is the covariance between node i at t + lag and node j at t.
+    """
     ts = check_time_series(timeseries)
     lag = int(lag)
     if lag < 1:
         raise ValueError("lag must be at least 1.")
     if lag >= ts.shape[0]:
         raise ValueError("lag must be smaller than the number of time points.")
-
     if demean:
         ts = ts - np.mean(ts, axis=0, keepdims=True)
 
     past = ts[:-lag]
     future = ts[lag:]
 
-    if denominator == "n_time":
-        denom = ts.shape[0]
-    elif denominator == "n_valid":
-        denom = past.shape[0]
-    elif denominator == "unbiased":
-        denom = past.shape[0] - 1
-    else:
-        raise ValueError("denominator must be 'n_time', 'n_valid', or 'unbiased'.")
-    if denom <= 0:
-        raise ValueError("Invalid denominator for lagged covariance.")
+    return future.T @ past / ts.shape[0]
 
-    return past.T @ future / denom
-
-
-def compute_lagged_correlation(
-    timeseries,
-    lag=1,
-    demean=True,
-    denominator="n_time",
-):
-    """Compute normalized lagged covariance from x(t) to x(t + lag)."""
+def compute_normalized_shifted_covariance(timeseries, lag=1, demean=True):
+    """Compute variance-normalized shifted covariance."""
     ts = check_time_series(timeseries)
     if demean:
         ts = ts - np.mean(ts, axis=0, keepdims=True)
 
-    cov_lag = compute_lagged_covariance(
-        ts,
-        lag=lag,
-        demean=False,
-        denominator=denominator,
-    )
+    shifted_cov = compute_shifted_covariance(ts, lag=lag, demean=False)
 
     zero_var = np.diag(ts.T @ ts / (ts.shape[0] - 1))
     if np.any(zero_var <= 0):
-        raise ValueError("Cannot normalize lagged covariance with zero variance.")
+        raise ValueError("Cannot normalize shifted covariance with zero variance.")
 
     scale = np.sqrt(zero_var[:, None] * zero_var[None, :])
-    return cov_lag / scale
+    return shifted_cov / scale
 
 
 def gaussian_mi_transform(matrix, eps=1e-12):
@@ -203,48 +179,54 @@ def gaussian_mi_transform(matrix, eps=1e-12):
     mat = np.clip(mat, -1.0 + eps, 1.0 - eps)
     return -0.5 * np.log(1.0 - mat * mat)
 
+def compute_lagged_pearson_correlation(timeseries, lag=1, demean=True):
+    """Compute Pearson correlation between x(t) and x(t + lag).
 
-def compute_forward_reverse_lagged_correlation(
-    timeseries,
-    lag=1,
-    demean=True,
-    denominator="n_time",
-):
-    """Compute forward and time-reversed lagged correlations."""
+    Element (i, j) is corr(node i at t, node j at t + lag).
+    """
     ts = check_time_series(timeseries)
+    lag = int(lag)
+    if lag < 1:
+        raise ValueError("lag must be at least 1.")
+    if lag >= ts.shape[0]:
+        raise ValueError("lag must be smaller than the number of time points.")
 
-    forward = compute_lagged_correlation(
+    past = ts[:-lag]
+    future = ts[lag:]
+    if demean:
+        past = past - np.mean(past, axis=0, keepdims=True)
+        future = future - np.mean(future, axis=0, keepdims=True)
+
+    past_sd = np.std(past, axis=0, ddof=1)
+    future_sd = np.std(future, axis=0, ddof=1)
+    if np.any(past_sd <= 0) or np.any(future_sd <= 0):
+        raise ValueError("Cannot compute lagged correlation with zero variance.")
+
+    cov = past.T @ future / (past.shape[0] - 1)
+    return cov / (past_sd[:, None] * future_sd[None, :])
+
+def compute_forward_reverse_lagged_correlation(timeseries, lag=1, demean=True):
+    """Compute forward and time-reversed lagged Pearson correlations."""
+    ts = check_time_series(timeseries)
+    forward = compute_lagged_pearson_correlation(
         ts,
         lag=lag,
         demean=demean,
-        denominator=denominator,
     )
-    reverse = compute_lagged_correlation(
+    reverse = compute_lagged_pearson_correlation(
         ts[::-1],
         lag=lag,
         demean=demean,
-        denominator=denominator,
     )
-
     return forward, reverse, forward - reverse
 
-
-def compute_forward_reverse_mi(
-    timeseries,
-    lag=1,
-    demean=True,
-    denominator="n_time",
-    eps=1e-12,
-):
+def compute_forward_reverse_mi(timeseries, lag=1, demean=True, eps=1e-12):
     """Compute MI-transformed forward and time-reversed lagged dependencies."""
     forward, reverse, _ = compute_forward_reverse_lagged_correlation(
         timeseries,
         lag=lag,
         demean=demean,
-        denominator=denominator,
     )
-
     forward_mi = gaussian_mi_transform(forward, eps=eps)
     reverse_mi = gaussian_mi_transform(reverse, eps=eps)
-
     return forward_mi, reverse_mi, forward_mi - reverse_mi

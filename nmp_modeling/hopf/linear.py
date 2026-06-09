@@ -1,4 +1,5 @@
 import numpy as np
+from dataclasses import dataclass
 from scipy.linalg import expm, solve_continuous_lyapunov
 
 
@@ -128,3 +129,76 @@ def linear_normalized_shifted_covariance(jacobian, covariance, n_nodes, lag_seco
         raise ValueError("Cannot normalize shifted covariance with zero variance.")
     scale = np.sqrt(zero_var[:, None] * zero_var[None, :])
     return shifted_x / scale
+
+
+@dataclass
+class LinearHopfEvaluation:
+    """Container for Linear Hopf FC and shifted-covariance observables."""
+    jacobian: np.ndarray
+    noise_covariance: np.ndarray
+    covariance: np.ndarray
+    fc: np.ndarray
+    shifted_covariance: np.ndarray
+    normalized_shifted_covariance: np.ndarray
+    max_real_eigenvalue: float
+
+
+def evaluate_linear_hopf(
+    model,
+    weights,
+    sigma,
+    lag_seconds,
+    check_stability=True,
+    tol=0.0,
+):
+    """Evaluate Linear Hopf FC and normalized shifted covariance.
+
+    The model must provide get_jacobian(weights=..., unit="s").
+    Sigma is interpreted in second-based Linear Hopf units, matching the
+    second-based Jacobian.
+    """
+    C = _check_square_matrix(weights, "weights")
+    n_nodes = C.shape[0]
+
+    A = model.get_jacobian(weights=C, unit="s")
+    max_real = max_real_eigenvalue(A)
+
+    if check_stability and max_real >= -float(tol):
+        raise ValueError(
+            "Jacobian is not asymptotically stable: "
+            f"max real eigenvalue = {max_real}."
+        )
+
+    Q = make_noise_covariance(sigma, n_nodes)
+    cov = solve_stationary_covariance(
+        jacobian=A,
+        noise_covariance=Q,
+        check_stability=False,
+    )
+
+    fc = linear_fc_from_covariance(cov, n_nodes)
+    np.fill_diagonal(fc, 0.0)
+
+    shifted = linear_shifted_covariance(
+        jacobian=A,
+        covariance=cov,
+        lag_seconds=lag_seconds,
+    )
+    shifted_x = shifted[:n_nodes, :n_nodes]
+
+    normalized_shifted = linear_normalized_shifted_covariance(
+        jacobian=A,
+        covariance=cov,
+        n_nodes=n_nodes,
+        lag_seconds=lag_seconds,
+    )
+
+    return LinearHopfEvaluation(
+        jacobian=A,
+        noise_covariance=Q,
+        covariance=cov,
+        fc=fc,
+        shifted_covariance=shifted_x,
+        normalized_shifted_covariance=normalized_shifted,
+        max_real_eigenvalue=max_real,
+    )

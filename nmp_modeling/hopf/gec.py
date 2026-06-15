@@ -4,8 +4,11 @@ from dataclasses import dataclass
 from nmp_modeling.hopf.linear import evaluate_linear_hopf
 from nmp_modeling.hopf.simulation import (
     LagcovObservables,
+    MIObservables,
     average_lagcov_observables,
+    average_mi_observables,
     simulate_lagcov_observables,
+    simulate_mi_observables,
 )
 
 
@@ -267,7 +270,6 @@ def fit_lagcov_gec(
     normalize_max=True,
     check_stability=True,
     stability_tol=0.0,
-    mode="lagcov",
 ):
     """Fit lagcov-style Hopf generative effective connectivity.
 
@@ -275,11 +277,6 @@ def fit_lagcov_gec(
         C <- C + lr_fc * (FC_emp - FC_sim)
                + lr_lag * (Lag_emp - Lag_sim)
     """
-    if mode != "lagcov":
-        raise NotImplementedError(
-            "Only mode='lagcov' is implemented. "
-        )
-
     sc = _check_square_matrix(sc, "sc")
     lag = int(lag)
     if lag < 1:
@@ -391,6 +388,254 @@ def fit_lagcov_gec(
         simulated_normalized_shifted_covariance=simulated.normalized_shifted_covariance,
         loss_history=loss_history,
         max_real_history=max_real_history,
+        n_iter=len(loss_history),
+        converged=converged,
+        stop_reason=stop_reason,
+    )
+
+
+@dataclass
+class MIGECResult:
+    """Container for MI/NR GEC fitting results."""
+    gec: np.ndarray
+    empirical_fc_mi: np.ndarray
+    empirical_forward_mi: np.ndarray
+    empirical_reverse_mi: np.ndarray
+    simulated_fc_mi: np.ndarray
+    simulated_forward_mi: np.ndarray
+    simulated_reverse_mi: np.ndarray
+    loss_history: list
+    n_iter: int
+    converged: bool
+    stop_reason: str
+
+
+def _prepare_mi_empirical_observables(
+    empirical_timeseries=None,
+    empirical_fc_mi=None,
+    empirical_forward_mi=None,
+    empirical_reverse_mi=None,
+    lag=2,
+    preprocess_fn=None,
+    eps=1e-12,
+):
+    """Create empirical MI/NR targets."""
+    provided = [
+        empirical_fc_mi is not None,
+        empirical_forward_mi is not None,
+        empirical_reverse_mi is not None,
+    ]
+    if any(provided) and not all(provided):
+        raise ValueError(
+            "Provide all of empirical_fc_mi, empirical_forward_mi, and "
+            "empirical_reverse_mi, or provide empirical_timeseries."
+        )
+    if all(provided):
+        fc_mi = _check_square_matrix(empirical_fc_mi, "empirical_fc_mi")
+        forward_mi = _check_square_matrix(empirical_forward_mi, "empirical_forward_mi")
+        reverse_mi = _check_square_matrix(empirical_reverse_mi, "empirical_reverse_mi")
+        if fc_mi.shape != forward_mi.shape or fc_mi.shape != reverse_mi.shape:
+            raise ValueError("All empirical MI matrices must have the same shape.")
+        fc_mi = np.array(fc_mi, dtype=float, copy=True)
+        forward_mi = np.array(forward_mi, dtype=float, copy=True)
+        reverse_mi = np.array(reverse_mi, dtype=float, copy=True)
+        np.fill_diagonal(fc_mi, 0.0)
+        np.fill_diagonal(forward_mi, 0.0)
+        np.fill_diagonal(reverse_mi, 0.0)
+        return MIObservables(
+            fc_mi=fc_mi,
+            forward_mi=forward_mi,
+            reverse_mi=reverse_mi,
+        )
+
+    if empirical_timeseries is None:
+        raise ValueError(
+            "Provide empirical_timeseries or all three precomputed empirical "
+            "MI matrices."
+        )
+
+    return average_mi_observables(
+        empirical_timeseries,
+        lag=lag,
+        preprocess_fn=preprocess_fn,
+        eps=eps,
+    )
+
+
+def _evaluate_mi_model(
+    gec,
+    lag,
+    adapter_factory,
+    theta,
+    seeds,
+    preprocess_fn=None,
+    eps=1e-12,
+):
+    """Evaluate simulated MI/NR observables for one GEC matrix."""
+    theta = dict(theta or {})
+    theta.setdefault("G", 1.0)
+    evaluation = simulate_mi_observables(
+        adapter_factory=adapter_factory,
+        weights=gec,
+        theta=theta,
+        seeds=seeds,
+        lag=lag,
+        preprocess_fn=preprocess_fn,
+        eps=eps,
+    )
+    return evaluation.observables
+
+
+def fit_mi_nr_gec(
+    sc,
+    empirical_timeseries=None,
+    empirical_fc_mi=None,
+    empirical_forward_mi=None,
+    empirical_reverse_mi=None,
+    lag=2,
+    adapter_factory=None,
+    theta=None,
+    seeds=None,
+    preprocess_fn=None,
+    init="zeros",
+    initial_gec=None,
+    max_c=0.2,
+    update_mask=None,
+    include_homologue_edges=True,
+    learning_rate_fc=0.0005,
+    learning_rate_forward=0.0001,
+    learning_rate_reverse=0.0001,
+    use_reversal=True,
+    n_iter=3000,
+    check_every=100,
+    relative_tolerance=None,
+    stop_if_worse=False,
+    allow_negative=False,
+    eps=1e-12,
+):
+    """Fit MI/NR-style Hopf generative effective connectivity.
+
+    The update is:
+        C <- C
+             + lr_fc * (I_fc_emp - I_fc_sim)
+             - lr_forward * (I_forward_emp - I_forward_sim)
+             + lr_reverse * (I_reverse_emp - I_reverse_sim)
+    """
+    sc = _check_square_matrix(sc, "sc")
+    lag = int(lag)
+    if lag < 1:
+        raise ValueError("lag must be at least 1.")
+    if n_iter < 1:
+        raise ValueError("n_iter must be positive.")
+    if check_every < 1:
+        raise ValueError("check_every must be positive.")
+
+    update_mask = _make_update_mask(
+        sc=sc,
+        update_mask=update_mask,
+        include_homologue_edges=include_homologue_edges,
+    )
+    empirical = _prepare_mi_empirical_observables(
+        empirical_timeseries=empirical_timeseries,
+        empirical_fc_mi=empirical_fc_mi,
+        empirical_forward_mi=empirical_forward_mi,
+        empirical_reverse_mi=empirical_reverse_mi,
+        lag=lag,
+        preprocess_fn=preprocess_fn,
+        eps=eps,
+    )
+    if empirical.fc_mi.shape != sc.shape:
+        raise ValueError("Empirical observables must have the same shape as sc.")
+    gec = _initialize_gec(
+        sc=sc,
+        update_mask=update_mask,
+        init=init,
+        initial_gec=initial_gec,
+        max_c=max_c,
+    )
+    gec = _apply_constraints(
+        gec=gec,
+        update_mask=update_mask,
+        allow_negative=allow_negative,
+        l1_alpha=0.0,
+        normalize_max=False,
+        max_c=max_c,
+    )
+
+    loss_history = []
+    previous_checked_loss = None
+    converged = False
+    stop_reason = "maximum iterations reached"
+    for iteration in range(int(n_iter)):
+        simulated = _evaluate_mi_model(
+            gec=gec,
+            lag=lag,
+            adapter_factory=adapter_factory,
+            theta=theta,
+            seeds=seeds,
+            preprocess_fn=preprocess_fn,
+            eps=eps,
+        )
+
+        fc_loss = _offdiag_mse(empirical.fc_mi, simulated.fc_mi)
+        forward_loss = _offdiag_mse(empirical.forward_mi, simulated.forward_mi)
+        reverse_loss = _offdiag_mse(empirical.reverse_mi, simulated.reverse_mi)
+        if use_reversal:
+            loss = fc_loss + forward_loss + reverse_loss
+        else:
+            loss = fc_loss
+        loss_history.append(loss)
+
+        if (
+            relative_tolerance is not None
+            and iteration > 0
+            and iteration % int(check_every) == 0
+        ):
+            if previous_checked_loss is not None:
+                improvement = previous_checked_loss - loss
+                if stop_if_worse and improvement < 0:
+                    stop_reason = "loss increased at checkpoint"
+                    break
+
+                denominator = max(abs(loss), np.finfo(float).eps)
+                relative_improvement = improvement / denominator
+                if relative_improvement < float(relative_tolerance):
+                    converged = True
+                    stop_reason = "relative improvement below tolerance"
+                    break
+
+            previous_checked_loss = loss
+
+        delta = float(learning_rate_fc) * (
+            empirical.fc_mi - simulated.fc_mi
+        )
+        if use_reversal:
+            delta = (
+                delta
+                - float(learning_rate_forward)
+                * (empirical.forward_mi - simulated.forward_mi)
+                + float(learning_rate_reverse)
+                * (empirical.reverse_mi - simulated.reverse_mi)
+            )
+        gec[update_mask] = gec[update_mask] + delta[update_mask]
+        gec = _apply_constraints(
+            gec=gec,
+            update_mask=update_mask,
+            allow_negative=allow_negative,
+            l1_alpha=0.0,
+            normalize_max=False,
+            max_c=max_c,
+        )
+
+    return MIGECResult(
+        gec=gec,
+        empirical_fc_mi=empirical.fc_mi,
+        empirical_forward_mi=empirical.forward_mi,
+        empirical_reverse_mi=empirical.reverse_mi,
+        simulated_fc_mi=simulated.fc_mi,
+        simulated_forward_mi=simulated.forward_mi,
+        simulated_reverse_mi=simulated.reverse_mi,
+        loss_history=loss_history,
         n_iter=len(loss_history),
         converged=converged,
         stop_reason=stop_reason,

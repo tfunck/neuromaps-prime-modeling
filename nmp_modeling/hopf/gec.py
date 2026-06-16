@@ -25,6 +25,8 @@ class LagcovGECResult:
     n_iter: int
     converged: bool
     stop_reason: str
+    best_loss: float
+    best_iter: int
 
 
 def _check_square_matrix(matrix, name):
@@ -45,6 +47,35 @@ def _offdiag_values(matrix):
 def _offdiag_mse(a, b):
     """Return off-diagonal mean squared error between two square matrices."""
     return float(np.mean((_offdiag_values(a) - _offdiag_values(b)) ** 2))
+
+
+def _check_finite_loss(loss):
+    """Validate and return a finite scalar loss."""
+    loss = float(loss)
+    if not np.isfinite(loss):
+        raise ValueError(f"Loss is not finite: {loss}.")
+    return loss
+
+
+def _copy_lagcov_observables(observables):
+    """Copy lagcov observables so the best state remains immutable."""
+    return LagcovObservables(
+        fc=np.array(observables.fc, dtype=float, copy=True),
+        normalized_shifted_covariance=np.array(
+            observables.normalized_shifted_covariance,
+            dtype=float,
+            copy=True,
+        ),
+    )
+
+
+def _copy_mi_observables(observables):
+    """Copy MI observables so the best state remains immutable."""
+    return MIObservables(
+        fc_mi=np.array(observables.fc_mi, dtype=float, copy=True),
+        forward_mi=np.array(observables.forward_mi, dtype=float, copy=True),
+        reverse_mi=np.array(observables.reverse_mi, dtype=float, copy=True),
+    )
 
 
 def _make_update_mask(sc, update_mask=None, include_homologue_edges=False):
@@ -321,38 +352,56 @@ def fit_lagcov_gec(
     previous_checked_loss = None
     converged = False
     stop_reason = "maximum iterations reached"
+    best_loss = np.inf
+    best_iter = -1
     for iteration in range(int(n_iter)):
-        simulated, max_real = _evaluate_lagcov_model(
-            backend=backend,
-            gec=gec,
-            lag=lag,
-            tr_seconds=tr_seconds,
-            sigma=sigma,
-            linear_model=linear_model,
-            check_stability=check_stability,
-            stability_tol=stability_tol,
-            adapter_factory=adapter_factory,
-            theta=theta,
-            seeds=seeds,
-            preprocess_fn=preprocess_fn,
-        )
-        max_real_history.append(max_real)
+        evaluated_gec = np.array(gec, dtype=float, copy=True)
 
-        fc_loss = _offdiag_mse(empirical.fc, simulated.fc)
-        lag_loss = _offdiag_mse(
-            empirical.normalized_shifted_covariance,
-            simulated.normalized_shifted_covariance,
-        )
-        loss = fc_loss + lag_loss
+        try:
+            simulated, max_real = _evaluate_lagcov_model(
+                backend=backend,
+                gec=evaluated_gec,
+                lag=lag,
+                tr_seconds=tr_seconds,
+                sigma=sigma,
+                linear_model=linear_model,
+                check_stability=check_stability,
+                stability_tol=stability_tol,
+                adapter_factory=adapter_factory,
+                theta=theta,
+                seeds=seeds,
+                preprocess_fn=preprocess_fn,
+            )
+
+            fc_loss = _offdiag_mse(empirical.fc, simulated.fc)
+            lag_loss = _offdiag_mse(
+                empirical.normalized_shifted_covariance,
+                simulated.normalized_shifted_covariance,
+            )
+            loss = _check_finite_loss(fc_loss + lag_loss)
+
+        except (ValueError, FloatingPointError, np.linalg.LinAlgError) as exc:
+            stop_reason = f"invalid model evaluation at iteration {iteration}: {exc}"
+            converged = False
+            break
+
+        max_real_history.append(max_real)
         loss_history.append(loss)
 
-        if iteration > 0 and iteration % int(check_every) == 0:
-            if previous_checked_loss is not None:
-                improvement = previous_checked_loss - loss
-                if stop_if_worse and improvement < 0:
-                    stop_reason = "loss increased at checkpoint"
-                    break
+        if loss < best_loss:
+            best_loss = loss
+            best_iter = iteration
+            best_gec = evaluated_gec
+            best_simulated = _copy_lagcov_observables(simulated)
 
+        if iteration == 0:
+            previous_checked_loss = loss
+        elif iteration % int(check_every) == 0:
+            improvement = previous_checked_loss - loss
+            if stop_if_worse and improvement < 0:
+                stop_reason = "loss increased at checkpoint"
+                break
+            if relative_tolerance is not None:
                 denominator = max(abs(loss), np.finfo(float).eps)
                 relative_improvement = improvement / denominator
                 if relative_improvement < float(relative_tolerance):
@@ -381,16 +430,18 @@ def fit_lagcov_gec(
         )
 
     return LagcovGECResult(
-        gec=gec,
+        gec=best_gec,
         empirical_fc=empirical.fc,
         empirical_normalized_shifted_covariance=empirical.normalized_shifted_covariance,
-        simulated_fc=simulated.fc,
-        simulated_normalized_shifted_covariance=simulated.normalized_shifted_covariance,
+        simulated_fc=best_simulated.fc,
+        simulated_normalized_shifted_covariance=best_simulated.normalized_shifted_covariance,
         loss_history=loss_history,
         max_real_history=max_real_history,
         n_iter=len(loss_history),
         converged=converged,
         stop_reason=stop_reason,
+        best_loss=best_loss,
+        best_iter=best_iter,
     )
 
 

@@ -459,6 +459,8 @@ class MIGECResult:
     n_iter: int
     converged: bool
     stop_reason: str
+    best_loss: float
+    best_iter: int
 
 
 def _prepare_mi_empirical_observables(
@@ -617,37 +619,52 @@ def fit_mi_nr_gec(
     previous_checked_loss = None
     converged = False
     stop_reason = "maximum iterations reached"
+    best_loss = np.inf
+    best_iter = -1
     for iteration in range(int(n_iter)):
-        simulated = _evaluate_mi_model(
-            gec=gec,
-            lag=lag,
-            adapter_factory=adapter_factory,
-            theta=theta,
-            seeds=seeds,
-            preprocess_fn=preprocess_fn,
-            eps=eps,
-        )
+        evaluated_gec = np.array(gec, dtype=float, copy=True)
 
-        fc_loss = _offdiag_mse(empirical.fc_mi, simulated.fc_mi)
-        forward_loss = _offdiag_mse(empirical.forward_mi, simulated.forward_mi)
-        reverse_loss = _offdiag_mse(empirical.reverse_mi, simulated.reverse_mi)
-        if use_reversal:
-            loss = fc_loss + forward_loss + reverse_loss
-        else:
-            loss = fc_loss
+        try:
+            simulated = _evaluate_mi_model(
+                gec=evaluated_gec,
+                lag=lag,
+                adapter_factory=adapter_factory,
+                theta=theta,
+                seeds=seeds,
+                preprocess_fn=preprocess_fn,
+                eps=eps,
+            )
+
+            fc_loss = _offdiag_mse(empirical.fc_mi, simulated.fc_mi)
+            forward_loss = _offdiag_mse(empirical.forward_mi, simulated.forward_mi)
+            reverse_loss = _offdiag_mse(empirical.reverse_mi, simulated.reverse_mi)
+            if use_reversal:
+                loss = fc_loss + forward_loss + reverse_loss
+            else:
+                loss = fc_loss
+            loss = _check_finite_loss(loss)
+
+        except (ValueError, FloatingPointError, np.linalg.LinAlgError) as exc:
+            stop_reason = f"invalid model evaluation at iteration {iteration}: {exc}"
+            converged = False
+            break
+
         loss_history.append(loss)
 
-        if (
-            relative_tolerance is not None
-            and iteration > 0
-            and iteration % int(check_every) == 0
-        ):
-            if previous_checked_loss is not None:
-                improvement = previous_checked_loss - loss
-                if stop_if_worse and improvement < 0:
-                    stop_reason = "loss increased at checkpoint"
-                    break
+        if loss < best_loss:
+            best_loss = loss
+            best_iter = iteration
+            best_gec = evaluated_gec
+            best_simulated = _copy_mi_observables(simulated)
 
+        if iteration == 0:
+            previous_checked_loss = loss
+        elif iteration % int(check_every) == 0:
+            improvement = previous_checked_loss - loss
+            if stop_if_worse and improvement < 0:
+                stop_reason = "loss increased at checkpoint"
+                break
+            if relative_tolerance is not None:
                 denominator = max(abs(loss), np.finfo(float).eps)
                 relative_improvement = improvement / denominator
                 if relative_improvement < float(relative_tolerance):
@@ -679,15 +696,17 @@ def fit_mi_nr_gec(
         )
 
     return MIGECResult(
-        gec=gec,
+        gec=best_gec,
         empirical_fc_mi=empirical.fc_mi,
         empirical_forward_mi=empirical.forward_mi,
         empirical_reverse_mi=empirical.reverse_mi,
-        simulated_fc_mi=simulated.fc_mi,
-        simulated_forward_mi=simulated.forward_mi,
-        simulated_reverse_mi=simulated.reverse_mi,
+        simulated_fc_mi=best_simulated.fc_mi,
+        simulated_forward_mi=best_simulated.forward_mi,
+        simulated_reverse_mi=best_simulated.reverse_mi,
         loss_history=loss_history,
         n_iter=len(loss_history),
         converged=converged,
         stop_reason=stop_reason,
+        best_loss=best_loss,
+        best_iter=best_iter,
     )

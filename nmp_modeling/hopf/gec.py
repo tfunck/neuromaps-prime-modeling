@@ -129,13 +129,12 @@ def _initialize_gec(sc, update_mask, init="scaled_sc", initial_gec=None, max_c=0
     return gec
 
 
-def _normalize_to_max_c(gec, update_mask, max_c):
-    """Normalize positive GEC values so their maximum equals max_c."""
+def _cap_to_max_c(gec, update_mask, max_c, allow_negative=False):
+    """Clip updated GEC weights to the allowed max-C range."""
     out = np.array(gec, dtype=float, copy=True)
-    positive = out[update_mask]
-    positive_max = np.max(positive) if positive.size else 0.0
-    if positive_max > 0:
-        out = out / positive_max * float(max_c)
+    limit = abs(float(max_c))
+    lower = -limit if allow_negative else 0.0
+    out[update_mask] = np.clip(out[update_mask], lower, limit)
     out[~update_mask] = 0.0
     np.fill_diagonal(out, 0.0)
     return out
@@ -155,7 +154,7 @@ def _apply_constraints(
     update_mask,
     allow_negative=False,
     l1_alpha=0.0,
-    normalize_max=True,
+    cap_max=True,
     max_c=0.2,
 ):
     """Apply mask, optional L1 shrinkage, nonnegativity, and max normalization."""
@@ -170,11 +169,12 @@ def _apply_constraints(
     )
     if not allow_negative:
         out[out < 0.0] = 0.0
-    if normalize_max and float(l1_alpha) == 0.0:
-        out = _normalize_to_max_c(
+    if cap_max:
+        out = _cap_to_max_c(
             gec=out,
             update_mask=update_mask,
             max_c=max_c,
+            allow_negative=allow_negative,
         )
 
     return out
@@ -298,7 +298,7 @@ def fit_lagcov_gec(
     stop_if_worse=True,
     allow_negative=False,
     l1_alpha=0.0,
-    normalize_max=True,
+    cap_max=True,
     check_stability=True,
     stability_tol=0.0,
 ):
@@ -343,7 +343,7 @@ def fit_lagcov_gec(
         update_mask=update_mask,
         allow_negative=allow_negative,
         l1_alpha=0.0,
-        normalize_max=normalize_max,
+        cap_max=cap_max,
         max_c=max_c,
     )
 
@@ -425,7 +425,7 @@ def fit_lagcov_gec(
             update_mask=update_mask,
             allow_negative=allow_negative,
             l1_alpha=l1_alpha,
-            normalize_max=normalize_max,
+            cap_max=cap_max,
             max_c=max_c,
         )
 
@@ -611,7 +611,6 @@ def fit_mi_nr_gec(
         update_mask=update_mask,
         allow_negative=allow_negative,
         l1_alpha=0.0,
-        normalize_max=False,
         max_c=max_c,
     )
 
@@ -691,7 +690,6 @@ def fit_mi_nr_gec(
             update_mask=update_mask,
             allow_negative=allow_negative,
             l1_alpha=0.0,
-            normalize_max=False,
             max_c=max_c,
         )
 

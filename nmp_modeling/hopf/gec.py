@@ -556,8 +556,7 @@ def fit_mi_nr_gec(
     update_mask=None,
     include_homologue_edges=True,
     learning_rate_fc=0.0005,
-    learning_rate_forward=0.0001,
-    learning_rate_reverse=0.0001,
+    learning_rate_nr=0.0001,
     use_reversal=True,
     n_iter=3000,
     check_every=100,
@@ -571,8 +570,7 @@ def fit_mi_nr_gec(
     The update is:
         C <- C
              + lr_fc * (I_fc_emp - I_fc_sim)
-             - lr_forward * (I_forward_emp - I_forward_sim)
-             + lr_reverse * (I_reverse_emp - I_reverse_sim)
+             - lr_nr * ((I_forward_emp - I_reverse_emp) - (I_forward_sim - I_reverse_sim))
     """
     sc = _check_square_matrix(sc, "sc")
     lag = int(lag)
@@ -635,10 +633,11 @@ def fit_mi_nr_gec(
             )
 
             fc_loss = _offdiag_mse(empirical.fc_mi, simulated.fc_mi)
-            forward_loss = _offdiag_mse(empirical.forward_mi, simulated.forward_mi)
-            reverse_loss = _offdiag_mse(empirical.reverse_mi, simulated.reverse_mi)
             if use_reversal:
-                loss = fc_loss + forward_loss + reverse_loss
+                empirical_nr = empirical.forward_mi - empirical.reverse_mi
+                simulated_nr = simulated.forward_mi - simulated.reverse_mi
+                nr_loss = _offdiag_mse(empirical_nr, simulated_nr)
+                loss = fc_loss + nr_loss
             else:
                 loss = fc_loss
             loss = _check_finite_loss(loss)
@@ -673,17 +672,12 @@ def fit_mi_nr_gec(
 
             previous_checked_loss = loss
 
-        delta = float(learning_rate_fc) * (
-            empirical.fc_mi - simulated.fc_mi
-        )
+        delta = float(learning_rate_fc) * (empirical.fc_mi - simulated.fc_mi)
         if use_reversal:
-            delta = (
-                delta
-                - float(learning_rate_forward)
-                * (empirical.forward_mi - simulated.forward_mi)
-                + float(learning_rate_reverse)
-                * (empirical.reverse_mi - simulated.reverse_mi)
-            )
+            empirical_nr = empirical.forward_mi - empirical.reverse_mi
+            simulated_nr = simulated.forward_mi - simulated.reverse_mi
+            nr_residual = empirical_nr - simulated_nr
+            delta = delta - float(learning_rate_nr) * nr_residual
         gec[update_mask] = gec[update_mask] + delta[update_mask]
         gec = _apply_constraints(
             gec=gec,

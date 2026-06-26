@@ -316,6 +316,7 @@ def fit_lagcov_gec(
     check_every=100,
     relative_tolerance=1e-4,
     stop_if_worse=True,
+    monitor_fc_corr=False,
     allow_negative=False,
     l1_alpha=0.0,
     cap_max=True,
@@ -374,9 +375,10 @@ def fit_lagcov_gec(
     stop_reason = "maximum iterations reached"
     best_loss = np.inf
     best_iter = -1
-    fc_corr_history = []
-    best_fc_corr = -np.inf
-    best_fc_corr_iter = -1
+    fc_corr_history = [] if monitor_fc_corr else None
+    previous_checked_fc_corr = None
+    best_fc_corr = None
+    best_fc_corr_iter = None
     best_fc_corr_gec = None
     for iteration in range(int(n_iter)):
         evaluated_gec = np.array(gec, dtype=float, copy=True)
@@ -403,7 +405,9 @@ def fit_lagcov_gec(
                 simulated.normalized_shifted_covariance,
             )
             loss = _check_finite_loss(fc_loss + lag_loss)
-            fc_corr = _offdiag_corr(empirical.fc, simulated.fc)
+            fc_corr = None
+            if monitor_fc_corr:
+                fc_corr = _offdiag_corr(empirical.fc, simulated.fc)
 
         except (ValueError, FloatingPointError, np.linalg.LinAlgError) as exc:
             stop_reason = f"invalid model evaluation at iteration {iteration}: {exc}"
@@ -418,20 +422,53 @@ def fit_lagcov_gec(
             best_gec = evaluated_gec
             best_simulated = _copy_lagcov_observables(simulated)
 
-        fc_corr_history.append(fc_corr)
-        if np.isfinite(fc_corr) and fc_corr > best_fc_corr:
-            best_fc_corr = fc_corr
-            best_fc_corr_iter = iteration
-            best_fc_corr_gec = evaluated_gec
+        if monitor_fc_corr:
+            fc_corr_history.append(fc_corr)
+            if (
+                fc_corr is not None
+                and np.isfinite(fc_corr)
+                and (best_fc_corr is None or fc_corr > best_fc_corr)
+            ):
+                best_fc_corr = fc_corr
+                best_fc_corr_iter = iteration
+                best_fc_corr_gec = np.array(evaluated_gec, dtype=float, copy=True)
 
         if iteration == 0:
             previous_checked_loss = loss
+            if monitor_fc_corr:
+                previous_checked_fc_corr = fc_corr
+
         elif iteration % int(check_every) == 0:
             improvement = previous_checked_loss - loss
-            if stop_if_worse and improvement < 0:
-                stop_reason = "loss increased at checkpoint"
-                break
-            if relative_tolerance is not None:
+            loss_increased = improvement < 0.0
+            skip_tolerance_check = False
+
+            if stop_if_worse and loss_increased:
+                if monitor_fc_corr:
+                    fc_corr_decreased = (
+                        fc_corr is not None
+                        and previous_checked_fc_corr is not None
+                        and np.isfinite(fc_corr)
+                        and np.isfinite(previous_checked_fc_corr)
+                        and fc_corr < previous_checked_fc_corr
+                    )
+
+                    if fc_corr_decreased:
+                        stop_reason = (
+                            "loss increased and FC correlation decreased at checkpoint"
+                        )
+                        break
+
+                    # If loss worsens but FC correlation does not worsen,
+                    # keep going instead of treating the negative improvement
+                    # as convergence.
+                    skip_tolerance_check = True
+
+                else:
+                    stop_reason = "loss increased at checkpoint"
+                    break
+
+            if relative_tolerance is not None and not skip_tolerance_check:
                 denominator = max(abs(loss), np.finfo(float).eps)
                 relative_improvement = improvement / denominator
                 if relative_improvement < float(relative_tolerance):
@@ -440,6 +477,8 @@ def fit_lagcov_gec(
                     break
 
             previous_checked_loss = loss
+            if monitor_fc_corr:
+                previous_checked_fc_corr = fc_corr
 
         delta = (
             float(learning_rate_fc) * (empirical.fc - simulated.fc)
@@ -473,7 +512,7 @@ def fit_lagcov_gec(
         best_loss=best_loss,
         best_iter=best_iter,
         fc_corr_history=fc_corr_history,
-        best_fc_corr=best_fc_corr if np.isfinite(best_fc_corr) else None,
+        best_fc_corr=best_fc_corr,
         best_fc_corr_iter=best_fc_corr_iter,
         best_fc_corr_gec=best_fc_corr_gec,
     )

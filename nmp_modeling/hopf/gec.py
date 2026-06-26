@@ -27,6 +27,10 @@ class LagcovGECResult:
     stop_reason: str
     best_loss: float
     best_iter: int
+    fc_corr_history: list | None = None
+    best_fc_corr: float | None = None
+    best_fc_corr_iter: int | None = None
+    best_fc_corr_gec: np.ndarray | None = None
 
 
 def _check_square_matrix(matrix, name):
@@ -47,6 +51,22 @@ def _offdiag_values(matrix):
 def _offdiag_mse(a, b):
     """Return off-diagonal mean squared error between two square matrices."""
     return float(np.mean((_offdiag_values(a) - _offdiag_values(b)) ** 2))
+
+
+def _safe_corr(a, b):
+    """Return Pearson correlation, or NaN if one vector is constant."""
+    x = np.asarray(a, dtype=float).ravel()
+    y = np.asarray(b, dtype=float).ravel()
+    if x.size != y.size:
+        raise ValueError("Correlation inputs must have the same size.")
+    if x.size < 2 or np.std(x) == 0.0 or np.std(y) == 0.0:
+        return np.nan
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def _offdiag_corr(a, b):
+    """Return off-diagonal Pearson correlation between two square matrices."""
+    return _safe_corr(_offdiag_values(a), _offdiag_values(b))
 
 
 def _check_finite_loss(loss):
@@ -354,6 +374,10 @@ def fit_lagcov_gec(
     stop_reason = "maximum iterations reached"
     best_loss = np.inf
     best_iter = -1
+    fc_corr_history = []
+    best_fc_corr = -np.inf
+    best_fc_corr_iter = -1
+    best_fc_corr_gec = None
     for iteration in range(int(n_iter)):
         evaluated_gec = np.array(gec, dtype=float, copy=True)
 
@@ -379,6 +403,7 @@ def fit_lagcov_gec(
                 simulated.normalized_shifted_covariance,
             )
             loss = _check_finite_loss(fc_loss + lag_loss)
+            fc_corr = _offdiag_corr(empirical.fc, simulated.fc)
 
         except (ValueError, FloatingPointError, np.linalg.LinAlgError) as exc:
             stop_reason = f"invalid model evaluation at iteration {iteration}: {exc}"
@@ -387,12 +412,17 @@ def fit_lagcov_gec(
 
         max_real_history.append(max_real)
         loss_history.append(loss)
-
         if loss < best_loss:
             best_loss = loss
             best_iter = iteration
             best_gec = evaluated_gec
             best_simulated = _copy_lagcov_observables(simulated)
+
+        fc_corr_history.append(fc_corr)
+        if np.isfinite(fc_corr) and fc_corr > best_fc_corr:
+            best_fc_corr = fc_corr
+            best_fc_corr_iter = iteration
+            best_fc_corr_gec = evaluated_gec
 
         if iteration == 0:
             previous_checked_loss = loss
@@ -442,6 +472,10 @@ def fit_lagcov_gec(
         stop_reason=stop_reason,
         best_loss=best_loss,
         best_iter=best_iter,
+        fc_corr_history=fc_corr_history,
+        best_fc_corr=best_fc_corr if np.isfinite(best_fc_corr) else None,
+        best_fc_corr_iter=best_fc_corr_iter,
+        best_fc_corr_gec=best_fc_corr_gec,
     )
 
 

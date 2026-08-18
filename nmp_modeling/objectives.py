@@ -70,15 +70,19 @@ def frobenius_distance(simulated, empirical):
     return float(np.linalg.norm(sim - emp))
 
 
-def mse_distance(simulated, empirical):
-    """Return mean squared error between two arrays."""
+def offdiag_mse_distance(simulated, empirical):
+    """Return mean squared error over off-diagonal matrix entries."""
     sim = np.asarray(simulated, dtype=float)
     emp = np.asarray(empirical, dtype=float)
 
     if sim.shape != emp.shape:
         raise ValueError("Inputs must have the same shape.")
+    if sim.ndim != 2 or sim.shape[0] != sim.shape[1]:
+        raise ValueError("Inputs must be square 2D matrices.")
 
-    return float(np.mean((sim - emp) ** 2))
+    mask = ~np.eye(sim.shape[0], dtype=bool)
+
+    return float(np.mean((sim[mask] - emp[mask]) ** 2))
 
 
 def mean_abs_difference(simulated, empirical, triangle="upper"):
@@ -121,19 +125,3 @@ def fc_distribution_ks_distance(simulated, empirical, triangle="upper"):
         emp = matrix_edges(emp, triangle=triangle)
 
     return ks_distance(sim, emp)
-
-
-def offdiag_mse_distance(simulated, empirical):
-    """Return mean squared error over off-diagonal matrix entries."""
-    sim = np.asarray(simulated, dtype=float)
-    emp = np.asarray(empirical, dtype=float)
-
-    if sim.shape != emp.shape:
-        raise ValueError("Inputs must have the same shape.")
-
-    if (sim.ndim != 2 or sim.shape[0] != sim.shape[1]):
-        raise ValueError("Inputs must be square 2D matrices.")
-
-    mask = ~np.eye(sim.shape[0], dtype=bool)
-
-    return float(np.mean((sim[mask] - emp[mask]) ** 2))

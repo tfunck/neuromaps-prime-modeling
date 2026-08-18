@@ -192,9 +192,9 @@ def _distance_frobenius(simulated, empirical, **kwargs):
     return objectives.frobenius_distance(simulated, empirical)
 
 
-def _distance_mse(simulated, empirical, **kwargs):
-    """Compare arrays by mean squared error."""
-    return objectives.mse_distance(simulated, empirical)
+def _distance_offdiag_mse(simulated, empirical, **kwargs):
+    """Compare matrices by off-diagonal mean squared error."""
+    return objectives.offdiag_mse_distance(simulated, empirical)
 
 
 def _distance_mean_abs_diff(simulated, empirical, triangle="upper", **kwargs):
@@ -437,7 +437,7 @@ OBSERVABLE_SPECS = {
         name="fc_mse",
         compute_fn=_compute_fc,
         empirical_fn=_empirical_fc,
-        distance_fn=_distance_mse,
+        distance_fn=_distance_offdiag_mse,
         aggregate_fn=_aggregate_fc,
         defaults=_fc_defaults(fisher_z=False),
         allowed_input_types=("timeseries", "fc", "fisher_z_fc", "observable"),

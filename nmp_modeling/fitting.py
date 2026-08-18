@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import itertools
-
 import numpy as np
+from nmp_modeling.optimization import optimize
 
 
 @dataclass
@@ -31,6 +31,28 @@ class SweepResult:
     @property
     def params(self):
         """Return fixed parameters merged with the best grid parameters."""
+        return {**self.fixed, **self.best_theta}
+
+
+@dataclass
+class ContinuousFitResult:
+    """Result from continuous parameter fitting."""
+    best_theta: dict
+    best_loss: float
+    history: np.ndarray
+    n_iter: int
+    n_evaluations: int
+    method: str
+    optimizer_seed: int
+    fixed: dict
+    run_losses: np.ndarray
+    target_losses: np.ndarray
+    target_names: list
+    target_weights: np.ndarray
+
+    @property
+    def params(self):
+        """Return fixed parameters merged with the best fitted parameters."""
         return {**self.fixed, **self.best_theta}
 
 
@@ -271,4 +293,76 @@ def grid_sweep(
         fixed=fixed,
         target_names=target_names,
         target_weights=weights,
+    )
+
+
+def continuous_fit(
+    adapter,
+    free_params,
+    fixed,
+    targets,
+    n_subjects=None,
+    run_seeds=(0,),
+    target_weights=None,
+    prepare_theta=None,
+    method="cmaes",
+    optimizer_seed=0,
+    max_iter=200,
+    population_size=None,
+    method_options=None,
+    verbose=False,
+):
+    """Fit bounded continuous parameters using the existing target pipeline."""
+    fixed = dict(fixed or {})
+    free_params = dict(free_params or {})
+
+    overlap = set(fixed) & set(free_params)
+    if overlap:
+        raise ValueError(
+            f"Parameter(s) cannot appear in both fixed and free_params: {sorted(overlap)}"
+        )
+
+    best_evaluation = None
+
+    def objective(free_theta):
+        nonlocal best_evaluation
+        evaluation = evaluate_theta(
+            adapter=adapter,
+            theta={**fixed, **free_theta},
+            targets=targets,
+            n_subjects=n_subjects,
+            run_seeds=run_seeds,
+            target_weights=target_weights,
+            prepare_theta=prepare_theta,
+        )
+
+        if best_evaluation is None or evaluation.loss < best_evaluation.loss:
+            best_evaluation = evaluation
+
+        return evaluation.loss
+
+    result = optimize(
+        objective=objective,
+        free_params=free_params,
+        method=method,
+        seed=optimizer_seed,
+        max_iter=max_iter,
+        population_size=population_size,
+        method_options=method_options,
+        verbose=verbose,
+    )
+
+    return ContinuousFitResult(
+        best_theta=result.best_theta,
+        best_loss=result.best_loss,
+        history=result.history,
+        n_iter=result.n_iter,
+        n_evaluations=result.n_evaluations,
+        method=result.method,
+        optimizer_seed=result.seed,
+        fixed=fixed,
+        run_losses=best_evaluation.run_losses,
+        target_losses=best_evaluation.target_losses,
+        target_names=best_evaluation.target_names,
+        target_weights=best_evaluation.target_weights,
     )

@@ -153,7 +153,7 @@ def _run_cmaes(evaluate, initial, seed, max_iter, population_size, options, verb
 def optimize(
     objective,
     free_params,
-    method="pso",
+    method="cmaes",
     seed=0,
     max_iter=200,
     population_size=None,

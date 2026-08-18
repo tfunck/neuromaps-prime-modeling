@@ -1,6 +1,7 @@
 import numpy as np
 from dataclasses import dataclass
 
+from nmp_modeling.objectives import offdiag_mse_distance
 from nmp_modeling.hopf.linear import evaluate_linear_hopf
 from nmp_modeling.hopf.simulation import (
     LagcovObservables,
@@ -46,11 +47,6 @@ def _offdiag_values(matrix):
     mat = _check_square_matrix(matrix, "matrix")
     mask = ~np.eye(mat.shape[0], dtype=bool)
     return mat[mask]
-
-
-def _offdiag_mse(a, b):
-    """Return off-diagonal mean squared error between two square matrices."""
-    return float(np.mean((_offdiag_values(a) - _offdiag_values(b)) ** 2))
 
 
 def _safe_corr(a, b):
@@ -399,8 +395,8 @@ def fit_lagcov_gec(
                 preprocess_fn=preprocess_fn,
             )
 
-            fc_loss = _offdiag_mse(empirical.fc, simulated.fc)
-            lag_loss = _offdiag_mse(
+            fc_loss = offdiag_mse_distance(empirical.fc, simulated.fc)
+            lag_loss = offdiag_mse_distance(
                 empirical.normalized_shifted_covariance,
                 simulated.normalized_shifted_covariance,
             )
@@ -705,11 +701,11 @@ def fit_mi_nr_gec(
                 eps=eps,
             )
 
-            fc_loss = _offdiag_mse(empirical.fc_mi, simulated.fc_mi)
+            fc_loss = offdiag_mse_distance(empirical.fc_mi, simulated.fc_mi)
             if use_reversal:
                 empirical_nr = empirical.forward_mi - empirical.reverse_mi
                 simulated_nr = simulated.forward_mi - simulated.reverse_mi
-                nr_loss = _offdiag_mse(empirical_nr, simulated_nr)
+                nr_loss = offdiag_mse_distance(empirical_nr, simulated_nr)
                 loss = fc_loss + nr_loss
             else:
                 loss = fc_loss

@@ -121,3 +121,19 @@ def fc_distribution_ks_distance(simulated, empirical, triangle="upper"):
         emp = matrix_edges(emp, triangle=triangle)
 
     return ks_distance(sim, emp)
+
+
+def offdiag_mse_distance(simulated, empirical):
+    """Return mean squared error over off-diagonal matrix entries."""
+    sim = np.asarray(simulated, dtype=float)
+    emp = np.asarray(empirical, dtype=float)
+
+    if sim.shape != emp.shape:
+        raise ValueError("Inputs must have the same shape.")
+
+    if (sim.ndim != 2 or sim.shape[0] != sim.shape[1]):
+        raise ValueError("Inputs must be square 2D matrices.")
+
+    mask = ~np.eye(sim.shape[0], dtype=bool)
+
+    return float(np.mean((sim[mask] - emp[mask]) ** 2))

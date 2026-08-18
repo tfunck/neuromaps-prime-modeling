@@ -1,3 +1,8 @@
 [project]
 name = "nmp-modeling"
 version = "0.0.1"
+
+[project.optional-dependencies]
+optimization = [
+    "cmaes>=0.13,<0.14",
+]

@@ -99,6 +99,57 @@ def _run_pso(evaluate, initial, seed, max_iter, population_size, options, verbos
     return global_best, global_value, history, n_evaluations
 
 
+def _run_cmaes(evaluate, initial, seed, max_iter, population_size, options, verbose):
+    """Run CMA-ES in normalized coordinates."""
+    try:
+        from cmaes import CMA
+    except ImportError as exc:
+        raise ImportError("CMA-ES requires the 'cmaes' package.") from exc
+
+    options = dict(options or {})
+    sigma = float(options.pop("sigma", 0.2))
+    if options:
+        raise ValueError(f"Unknown CMA-ES option(s): {sorted(options)}")
+
+    kwargs = {} if population_size is None else {"population_size": int(population_size)}
+    optimizer = CMA(
+        mean=np.clip(initial, 1e-12, 1.0 - 1e-12),
+        sigma=sigma,
+        bounds=np.tile([0.0, 1.0], (initial.size, 1)),
+        seed=int(seed),
+        **kwargs,
+    )
+
+    best_x = initial.copy()
+    best_loss = np.inf
+    history = []
+    n_evaluations = 0
+
+    for iteration in range(1, max_iter + 1):
+        solutions = []
+
+        for _ in range(optimizer.population_size):
+            x = optimizer.ask()
+            loss = evaluate(x)
+            solutions.append((x, loss))
+            n_evaluations += 1
+
+            if loss < best_loss:
+                best_x = np.asarray(x, dtype=float).copy()
+                best_loss = float(loss)
+
+        optimizer.tell(solutions)
+        history.append(best_loss)
+
+        if verbose:
+            print(f"{iteration}/{max_iter} loss={best_loss:.6g}")
+
+        if optimizer.should_stop():
+            break
+
+    return best_x, best_loss, history, n_evaluations
+
+
 def optimize(
     objective,
     free_params,
@@ -118,14 +169,15 @@ def optimize(
     names, lower, upper, initial = _parameter_space(free_params)
     method = str(method).lower()
 
-    if method != "pso":
-        raise ValueError("method must be 'pso'.")
+    if method not in {"pso", "cmaes"}:
+        raise ValueError("method must be 'pso' or 'cmaes'.")
 
-    if population_size is None:
+    if population_size is None and method == "pso":
         population_size = max(20, 4 * len(names))
-    population_size = int(population_size)
-    if population_size < 2:
-        raise ValueError("population_size must be at least 2.")
+    if population_size is not None:
+        population_size = int(population_size)
+        if population_size < 2:
+            raise ValueError("population_size must be at least 2.")
 
     def evaluate(values):
         loss = float(objective(_decode_theta(values, names, lower, upper)))
@@ -133,9 +185,14 @@ def optimize(
             return np.inf
         return loss
 
-    best_x, best_loss, history, n_evaluations = _run_pso(
-        evaluate, initial, int(seed), int(max_iter), population_size, method_options, verbose
-    )
+    if method == "pso":
+        best_x, best_loss, history, n_evaluations = _run_pso(
+            evaluate, initial, int(seed), int(max_iter), population_size, method_options, verbose
+        )
+    else:
+        best_x, best_loss, history, n_evaluations = _run_cmaes(
+            evaluate, initial, int(seed), int(max_iter), population_size, method_options, verbose
+        )
 
     return OptimizationResult(
         best_theta=_decode_theta(best_x, names, lower, upper),

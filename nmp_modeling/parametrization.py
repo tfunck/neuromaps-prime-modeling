@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import numpy as np
 import sympy as sp
@@ -194,3 +194,97 @@ class MapParametrization:
                 f"{result.size}, expected 1 or {self._n_nodes}."
             )
         return result
+
+
+@dataclass
+class WeightedMapParametrization:
+    target: str
+    maps: Dict[str, np.ndarray]
+    weight_params: Union[FreeParam, Dict[str, FreeParam]]
+    weight_prefix: str = "w_"
+
+    free_params: Dict[str, FreeParam] = field(init=False)
+    _map_names: Tuple[str, ...] = field(init=False, repr=False)
+    _map_matrix: np.ndarray = field(init=False, repr=False)
+
+    def __post_init__(self):
+        """Validate maps and prepare free weight parameters."""
+        if not isinstance(self.target, str) or not self.target:
+            raise ValueError("target must be a non-empty string.")
+
+        self.maps = dict(self.maps or {})
+        if not self.maps:
+            raise ValueError("At least one map is required.")
+
+        if not isinstance(self.weight_prefix, str):
+            raise TypeError("weight_prefix must be a string.")
+
+        normalized = {}
+        n_nodes = None
+
+        for name, values in self.maps.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError(f"Invalid map name: {name!r}.")
+
+            arr = np.asarray(values, dtype=float).reshape(-1)
+            if arr.size == 0:
+                raise ValueError(f"Map '{name}' is empty.")
+
+            if n_nodes is None:
+                n_nodes = arr.size
+            elif arr.size != n_nodes:
+                raise ValueError(
+                    f"All maps must have the same length. "
+                    f"Map '{name}' has length {arr.size}, expected {n_nodes}."
+                )
+
+            normalized[name] = arr
+
+        self.maps = normalized
+        self._map_names = tuple(self.maps)
+
+        if isinstance(self.weight_params, FreeParam):
+            specs = {name: self.weight_params for name in self._map_names}
+        else:
+            specs = dict(self.weight_params or {})
+            missing = set(self.maps) - set(specs)
+            extra = set(specs) - set(self.maps)
+
+            if missing:
+                raise ValueError(f"Missing weight parameter(s) for map(s): {sorted(missing)}")
+            if extra:
+                raise ValueError(f"Weight parameter(s) supplied for unknown map(s): {sorted(extra)}")
+
+            for name, spec in specs.items():
+                if not isinstance(spec, FreeParam):
+                    raise TypeError(f"Weight parameter for map '{name}' must be a FreeParam object.")
+
+        self.free_params = {
+            f"{self.weight_prefix}{name}": FreeParam(specs[name].init, specs[name].bounds)
+            for name in self._map_names
+        }
+
+        self._map_matrix = np.stack(
+            [self.maps[name] for name in self._map_names],
+            axis=0,
+        )
+
+    def evaluate(self, free_values: Dict[str, float]) -> np.ndarray:
+        """Return the weighted sum of all maps."""
+        free_values = dict(free_values or {})
+        missing = set(self.free_params) - set(free_values)
+        if missing:
+            raise KeyError(f"Missing free parameter value(s): {sorted(missing)}")
+
+        weights = []
+
+        for name in self._map_names:
+            param_name = f"{self.weight_prefix}{name}"
+            arr = np.asarray(free_values[param_name], dtype=float).reshape(-1)
+
+            if arr.size != 1:
+                raise ValueError(f"Free parameter '{param_name}' must be scalar.")
+
+            weights.append(float(arr[0]))
+
+        return np.asarray(weights, dtype=float) @ self._map_matrix

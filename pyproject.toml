@@ -1,8 +1,47 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "nmp-modeling"
-version = "0.0.1"
+version = "0.1.0"
+description = "Molecular priors for whole-brain modeling: couples neuromaps / Neuromaps-PRIME brain maps to whole-brain simulators and fits them to fMRI observables."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+authors = [
+  { name = "Thomas Funck" },
+]
+keywords = ["whole-brain modeling", "neuromaps", "receptor", "fMRI", "Hopf", "dynamic mean-field"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering",
+]
+dependencies = [
+  "numpy>=1.23",
+  "scipy>=1.9",
+  "sympy>=1.11",
+  "numba>=0.57",
+]
 
 [project.optional-dependencies]
-optimization = [
-    "cmaes>=0.13,<0.14",
+optimization = ["cmaes>=0.13,<0.14"]
+io = ["hdf5storage>=0.1.19"]
+neuronumba = [
+  "neuronumba @ git+https://github.com/neich/neuronumba.git#subdirectory=src",
+  "overrides>=7",  # used by the generic model wrappers
 ]
+test = ["pytest>=7"]
+all = ["nmp-modeling[optimization,io,neuronumba,test]"]
+
+[project.urls]
+Homepage = "https://github.com/tfunck/neuromaps-prime-modeling"
+Issues = "https://github.com/tfunck/neuromaps-prime-modeling/issues"
+
+[tool.setuptools.packages.find]
+include = ["nmp_modeling", "nmp_modeling.*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

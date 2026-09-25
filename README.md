@@ -6,7 +6,7 @@ You describe how a map enters a model with a symbolic expression such as `"a + b
 
 ## Status
 
-Version 0.1.0 is the first tagged release. It is research software: the API is stable enough to cite, but expect it to evolve. The release reproduces three published receptor-informed modeling results (see [Examples and validation](#examples-and-validation)).
+Version 0.1.0 is the first tagged release. It is research software: the API is stable enough to cite, but expect it to evolve. The release reproduces three published whole-brain modeling analyses, including receptor-informed models (see [Examples and validation](#examples-and-validation)).
 
 ## What's included
 
